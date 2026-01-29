@@ -12,6 +12,7 @@ A cross-platform .NET library for SMB/CIFS file operations. Works seamlessly on 
 - ✅ **Stream-Based API**: Efficient, memory-friendly file operations
 - ✅ **Async/Await**: Full async support with cancellation tokens
 - ✅ **Dependency Injection**: Built-in ASP.NET Core DI integration
+- ✅ **Health Checks**: Monitor SMB share connectivity with ASP.NET Core health checks
 - ✅ **Multiple .NET Versions**: Supports .NET Core 3.1, .NET 6, .NET 8, and .NET 10
 - ✅ **Secure**: Passwords passed via environment variables, not command-line arguments
 - ✅ **Well-Documented**: Comprehensive XML documentation with IntelliSense support
@@ -129,6 +130,23 @@ var handler = new FileHandler();
 var handler = new FileHandler("username", "password", "DOMAIN");
 ```
 
+## Path Format
+
+SmbSharp accepts SMB paths in multiple formats for flexibility:
+
+```csharp
+// Forward slashes (recommended for cross-platform code)
+await fileHandler.EnumerateFilesAsync("//server/share/folder");
+
+// Backslashes (Windows UNC format)
+await fileHandler.EnumerateFilesAsync("\\\\server\\share\\folder");
+
+// Mixed (automatically normalized)
+await fileHandler.EnumerateFilesAsync("//server/share\\folder");
+```
+
+**Note:** All path formats are automatically normalized internally. Forward slashes (`/`) are recommended for cross-platform compatibility, but backslashes (`\`) are fully supported for Windows-style UNC paths.
+
 ## Usage Examples
 
 ### List Files in a Directory
@@ -231,6 +249,88 @@ klist
 
 ### Username/Password Authentication
 Credentials are securely passed to smbclient via environment variables, not command-line arguments, preventing exposure in process listings.
+
+## Health Checks
+
+SmbSharp includes built-in health check support for ASP.NET Core applications to monitor SMB share connectivity.
+
+### Single Share Health Check
+
+```csharp
+// Program.cs
+builder.Services.AddSmbSharp();
+builder.Services.AddHealthChecks()
+    .AddSmbShareCheck("//server/share/folder");
+```
+
+### Named Health Check with Options
+
+```csharp
+builder.Services.AddHealthChecks()
+    .AddSmbShareCheck(
+        directoryPath: "//server/share/folder",
+        name: "primary_smb_share",
+        failureStatus: HealthStatus.Degraded,
+        tags: new[] { "smb", "storage" },
+        timeout: TimeSpan.FromSeconds(10)
+    );
+```
+
+### Multiple Share Health Checks
+
+```csharp
+var shares = new Dictionary<string, string>
+{
+    { "primary", "//server1/share1" },
+    { "backup", "//server2/share2" },
+    { "archive", "//server3/share3" }
+};
+
+builder.Services.AddHealthChecks()
+    .AddSmbShareChecks(shares, tags: new[] { "smb" });
+```
+
+### Health Check Endpoint
+
+```csharp
+// Program.cs
+var app = builder.Build();
+
+app.MapHealthChecks("/health");
+// Or with detailed response
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
+});
+```
+
+### Example Response
+
+**Healthy:**
+```json
+{
+  "status": "Healthy",
+  "results": {
+    "smb_share": {
+      "status": "Healthy",
+      "description": "Successfully connected to SMB share: //server/share/folder"
+    }
+  }
+}
+```
+
+**Unhealthy:**
+```json
+{
+  "status": "Unhealthy",
+  "results": {
+    "smb_share": {
+      "status": "Unhealthy",
+      "description": "Unable to connect to SMB share: //server/share/folder"
+    }
+  }
+}
+```
 
 ## API Reference
 
