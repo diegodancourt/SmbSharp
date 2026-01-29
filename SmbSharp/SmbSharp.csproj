@@ -1,0 +1,38 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFrameworks>netcoreapp3.1;net6.0;net8.0;net10.0</TargetFrameworks>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AssemblyName>SmbSharp</AssemblyName>
+        <RootNamespace>SmbSharp</RootNamespace>
+        <LangVersion>latest</LangVersion>
+
+        <!-- NuGet Package Configuration -->
+        <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+        <PackageId>SmbSharp</PackageId>
+        <Version>1.0.0</Version>
+        <Authors>Diego Dancourt</Authors>
+        <Company>Diego Dancourt</Company>
+        <Product>SmbSharp</Product>
+        <Description>A cross-platform .NET library for SMB/CIFS file operations. Supports both Kerberos and username/password authentication. Works on Windows (native UNC) and Linux/macOS (via smbclient).</Description>
+        <Copyright>Copyright © Diego Dancourt 2026</Copyright>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageProjectUrl>https://github.com/diegodancourt/SmbSharp</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/diegodancourt/SmbSharp</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageTags>smb;cifs;smbclient;file;share;network;kerberos;cross-platform</PackageTags>
+        <PackageReleaseNotes>Initial release with support for file enumeration, read, write, delete, move, and directory operations.</PackageReleaseNotes>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <None Include="..\README.md" Pack="true" PackagePath="\" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="3.1.0" />
+    </ItemGroup>
+
+</Project>
