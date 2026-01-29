@@ -1,4 +1,4 @@
-﻿namespace SmbSharp.Interfaces
+﻿namespace SmbSharp.Business.Interfaces
 {
     /// <summary>
     /// Provides an interface for file operations on SMB/CIFS shares across different platforms.
@@ -90,19 +90,6 @@
         Task<bool> CreateDirectoryAsync(string directoryPath, CancellationToken cancellationToken = default);
 
         /// <summary>
-        /// Tests connectivity to an SMB share or directory.
-        /// </summary>
-        /// <param name="directoryPath">The SMB path to test (e.g., "//server/share" or "//server/share/path")</param>
-        /// <param name="cancellationToken">Token to cancel the operation</param>
-        /// <returns>True if the connection succeeds and the path is accessible, false otherwise</returns>
-        /// <remarks>
-        /// On Windows, checks if the directory exists.
-        /// On non-Windows platforms, attempts to list files using smbclient.
-        /// This method does not throw exceptions; it returns false on failure.
-        /// </remarks>
-        Task<bool> CanConnectAsync(string directoryPath, CancellationToken cancellationToken = default);
-
-        /// <summary>
         /// Moves a file from one location to another on SMB shares.
         /// </summary>
         /// <param name="sourceFilePath">The full SMB path to the source file</param>
@@ -143,5 +130,18 @@
         /// <exception cref="IOException">Thrown when the SMB operation fails</exception>
         /// <exception cref="OperationCanceledException">Thrown when the operation is cancelled</exception>
         Task<bool> DeleteFileAsync(string filePath, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Tests connectivity to an SMB share or directory.
+        /// </summary>
+        /// <param name="directoryPath">The SMB path to test (e.g., "//server/share" or "//server/share/path")</param>
+        /// <param name="cancellationToken">Token to cancel the operation</param>
+        /// <returns>True if the connection succeeds and the path is accessible, false otherwise</returns>
+        /// <remarks>
+        /// On Windows, checks if the directory exists.
+        /// On non-Windows platforms, attempts to list files using smbclient.
+        /// This method does not throw exceptions; it returns false on failure.
+        /// </remarks>
+        Task<bool> CanConnectAsync(string directoryPath, CancellationToken cancellationToken = default);
     }
 }
