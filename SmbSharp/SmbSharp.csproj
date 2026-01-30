@@ -11,7 +11,7 @@
         <!-- NuGet Package Configuration -->
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <PackageId>SmbSharp</PackageId>
-        <Version>1.0.0</Version>
+        <Version>1.0.1</Version>
         <Authors>Diego Dancourt</Authors>
         <Company>Diego Dancourt</Company>
         <Product>SmbSharp</Product>
@@ -22,7 +22,7 @@
         <RepositoryUrl>https://github.com/diegodancourt/SmbSharp</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
         <PackageTags>smb;cifs;smbclient;file;share;network;kerberos;cross-platform</PackageTags>
-        <PackageReleaseNotes>Initial release with support for file enumeration, read, write, delete, move, and directory operations.</PackageReleaseNotes>
+        <PackageReleaseNotes>v1.0.1: Added comprehensive test coverage including Linux integration tests. Updated documentation to clarify support for both forward slash and backslash path formats. Improved error handling and validation.</PackageReleaseNotes>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
     </PropertyGroup>
