@@ -62,6 +62,7 @@ namespace SmbSharp.Business
 
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 return await _smbClientFileHandler.EnumerateFilesAsync(directory, cancellationToken);
             }
 
@@ -93,6 +94,7 @@ namespace SmbSharp.Business
 
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 return await _smbClientFileHandler.GetFileStreamAsync(directory, fileName, cancellationToken);
             }
 
@@ -149,6 +151,8 @@ namespace SmbSharp.Business
                 stream.Position = 0;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 // On Windows, use direct IO operations for UNC paths
@@ -192,6 +196,7 @@ namespace SmbSharp.Business
 
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 return await _smbClientFileHandler.CreateDirectoryAsync(directoryPath, cancellationToken);
             }
 
@@ -221,6 +226,8 @@ namespace SmbSharp.Business
 
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 // For smbclient, we need to download and re-upload since there's no native move command
                 var sourceDir = Path.GetDirectoryName(sourceFilePath);
                 if (string.IsNullOrEmpty(sourceDir))
@@ -269,6 +276,8 @@ namespace SmbSharp.Business
         {
             if (string.IsNullOrWhiteSpace(filePath))
                 throw new ArgumentException("File path cannot be null or empty", nameof(filePath));
+
+            cancellationToken.ThrowIfCancellationRequested();
 
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {

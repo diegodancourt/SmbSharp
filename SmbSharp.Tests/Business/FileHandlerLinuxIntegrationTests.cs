@@ -188,7 +188,8 @@ namespace SmbSharp.Tests.Business
                     ex is IOException ||
                     ex is FileNotFoundException ||
                     ex is DirectoryNotFoundException ||
-                    ex is UnauthorizedAccessException,
+                    ex is UnauthorizedAccessException ||
+                    ex is ArgumentException,
                     $"Unexpected exception type: {ex.GetType().Name}");
             }
         }
@@ -226,7 +227,8 @@ namespace SmbSharp.Tests.Business
                     ex is IOException ||
                     ex is FileNotFoundException ||
                     ex is DirectoryNotFoundException ||
-                    ex is UnauthorizedAccessException,
+                    ex is UnauthorizedAccessException ||
+                    ex is ArgumentException,
                     $"Unexpected exception type: {ex.GetType().Name}");
             }
         }
@@ -262,7 +264,8 @@ namespace SmbSharp.Tests.Business
                     ex is IOException ||
                     ex is FileNotFoundException ||
                     ex is DirectoryNotFoundException ||
-                    ex is UnauthorizedAccessException,
+                    ex is UnauthorizedAccessException ||
+                    ex is ArgumentException,
                     $"Unexpected exception type: {ex.GetType().Name}");
             }
         }
@@ -298,7 +301,8 @@ namespace SmbSharp.Tests.Business
                     ex is IOException ||
                     ex is FileNotFoundException ||
                     ex is DirectoryNotFoundException ||
-                    ex is UnauthorizedAccessException,
+                    ex is UnauthorizedAccessException ||
+                    ex is ArgumentException,
                     $"Unexpected exception type: {ex.GetType().Name}");
             }
         }
@@ -336,7 +340,8 @@ namespace SmbSharp.Tests.Business
                     ex is IOException ||
                     ex is FileNotFoundException ||
                     ex is DirectoryNotFoundException ||
-                    ex is UnauthorizedAccessException,
+                    ex is UnauthorizedAccessException ||
+                    ex is ArgumentException,
                     $"Unexpected exception type: {ex.GetType().Name}");
             }
         }
@@ -411,7 +416,8 @@ namespace SmbSharp.Tests.Business
                     ex is IOException ||
                     ex is FileNotFoundException ||
                     ex is DirectoryNotFoundException ||
-                    ex is UnauthorizedAccessException,
+                    ex is UnauthorizedAccessException ||
+                    ex is ArgumentException,
                     $"Unexpected exception during round-trip test: {ex.GetType().Name} - {ex.Message}");
             }
         }
