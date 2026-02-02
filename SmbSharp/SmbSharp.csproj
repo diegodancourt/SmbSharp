@@ -11,7 +11,7 @@
         <!-- NuGet Package Configuration -->
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <PackageId>SmbSharp</PackageId>
-        <Version>1.0.1</Version>
+        <Version>1.0.2</Version>
         <Authors>Diego Dancourt</Authors>
         <Company>Diego Dancourt</Company>
         <Product>SmbSharp</Product>
@@ -22,7 +22,7 @@
         <RepositoryUrl>https://github.com/diegodancourt/SmbSharp</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
         <PackageTags>smb;cifs;smbclient;file;share;network;kerberos;cross-platform</PackageTags>
-        <PackageReleaseNotes>v1.0.1: Added comprehensive test coverage including Linux integration tests. Updated documentation to clarify support for both forward slash and backslash path formats. Improved error handling and validation.</PackageReleaseNotes>
+        <PackageReleaseNotes>v1.0.2: Added health check support with AddSmbShareCheck and AddSmbShareChecks extension methods for monitoring SMB share availability. Includes comprehensive test coverage and improved Linux integration tests. Updated documentation to clarify support for both forward slash and backslash path formats.</PackageReleaseNotes>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
     </PropertyGroup>
