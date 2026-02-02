@@ -63,7 +63,7 @@ namespace SmbSharp.Business.Interfaces
         Task<bool> DeleteFileAsync(string smbPath, string fileName, CancellationToken cancellationToken = default);
 
         /// <summary>
-        /// Creates a directory at the specified SMB path.
+        /// Creates a directory at the specified SMB path. This operation is idempotent - it does nothing if the directory already exists.
         /// </summary>
         /// <param name="smbPath">The SMB path in UNC format (e.g., \\server\share\path).</param>
         /// <param name="cancellationToken">A token to cancel the operation.</param>

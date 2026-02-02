@@ -604,6 +604,16 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
 
+            // Mock the ls check to return "not found" (directory doesn't exist)
+            mockProcess
+                .Setup(x => x.ExecuteAsync(
+                    "smbclient",
+                    It.Is<string>(args => args.Contains("ls") && args.Contains("newdir")),
+                    It.IsAny<IDictionary<string, string>>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ProcessResult { ExitCode = 1, StandardError = "NT_STATUS_OBJECT_NAME_NOT_FOUND" });
+
+            // Mock the mkdir command to succeed
             mockProcess
                 .Setup(x => x.ExecuteAsync(
                     "smbclient",
@@ -621,9 +631,51 @@ namespace SmbSharp.Tests.Business.SmbClient
             Assert.True(result);
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
+                It.Is<string>(args => args.Contains("ls") && args.Contains("newdir")),
+                It.IsAny<IDictionary<string, string>>(),
+                It.IsAny<CancellationToken>()), Times.Once);
+            mockProcess.Verify(x => x.ExecuteAsync(
+                "smbclient",
                 It.Is<string>(args => args.Contains("mkdir") && args.Contains("newdir")),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Fact]
+        public async Task CreateDirectoryAsync_DirectoryAlreadyExists_ReturnsTrue()
+        {
+            // Arrange
+            var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
+            var mockProcess = new Mock<IProcessWrapper>();
+
+            // Mock the ls check to succeed (directory exists)
+            mockProcess
+                .Setup(x => x.ExecuteAsync(
+                    "smbclient",
+                    It.Is<string>(args => args.Contains("ls") && args.Contains("existingdir")),
+                    It.IsAny<IDictionary<string, string>>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "directory listing" });
+
+            var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
+
+            // Act
+            var result = await handler.CreateDirectoryAsync("//server/share/existingdir");
+
+            // Assert
+            Assert.True(result);
+            // Verify ls was called
+            mockProcess.Verify(x => x.ExecuteAsync(
+                "smbclient",
+                It.Is<string>(args => args.Contains("ls") && args.Contains("existingdir")),
+                It.IsAny<IDictionary<string, string>>(),
+                It.IsAny<CancellationToken>()), Times.Once);
+            // Verify mkdir was NOT called (directory already exists)
+            mockProcess.Verify(x => x.ExecuteAsync(
+                "smbclient",
+                It.Is<string>(args => args.Contains("mkdir")),
+                It.IsAny<IDictionary<string, string>>(),
+                It.IsAny<CancellationToken>()), Times.Never);
         }
 
         [Fact]

@@ -7,3 +7,4 @@ riderModule.iml
 .claude
 TestResults
 *.user
+nupkg/

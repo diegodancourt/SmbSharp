@@ -268,6 +268,19 @@ namespace SmbSharp.Business.SmbClient
                 throw new ArgumentException("Directory path cannot be empty", nameof(smbPath));
             }
 
+            // Check if directory already exists to make this operation idempotent (consistent with Windows behavior)
+            try
+            {
+                var checkCommand = $"ls \"{remotePath}\"";
+                await ExecuteSmbClientCommandAsync(server, share, checkCommand, smbPath, cancellationToken);
+                // If we reach here, the directory exists - return true (idempotent behavior)
+                return true;
+            }
+            catch (FileNotFoundException)
+            {
+                // Directory doesn't exist, proceed to create it
+            }
+
             var command = $"mkdir \"{remotePath}\"";
             await ExecuteSmbClientCommandAsync(server, share, command, smbPath, cancellationToken);
 
@@ -315,7 +328,7 @@ namespace SmbSharp.Business.SmbClient
             }
 
             // Try to differentiate error types based on smbclient error messages
-            var errorLower = result.StandardError.ToLowerInvariant();
+            var errorLower = (result.StandardError ?? string.Empty).ToLowerInvariant();
 
             if (errorLower.Contains("does not exist") ||
                 errorLower.Contains("not found") ||
