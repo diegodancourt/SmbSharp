@@ -167,6 +167,103 @@ namespace SmbSharp.Tests.Business.SmbClient
     }
 
     /// <summary>
+    /// Tests for FileExistsAsync
+    /// </summary>
+    public class SmbClientFileHandlerFileExistsTests
+    {
+        [Fact]
+        public async Task FileExistsAsync_FileExists_ReturnsTrue()
+        {
+            // Arrange
+            var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
+            var mockProcess = new Mock<IProcessWrapper>();
+
+            var smbClientOutput = @"  file1.txt                          A    12345  Mon Jan 29 10:00:00 2026
+  file2.doc                           A    67890  Tue Jan 30 11:00:00 2026";
+
+            mockProcess
+                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
+
+            var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
+
+            // Act
+            var result = await handler.FileExistsAsync("file1.txt", "//server/share/path");
+
+            // Assert
+            Assert.True(result);
+        }
+
+        [Fact]
+        public async Task FileExistsAsync_FileDoesNotExist_ReturnsFalse()
+        {
+            // Arrange
+            var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
+            var mockProcess = new Mock<IProcessWrapper>();
+
+            var smbClientOutput = @"  file1.txt                          A    12345  Mon Jan 29 10:00:00 2026
+  file2.doc                           A    67890  Tue Jan 30 11:00:00 2026";
+
+            mockProcess
+                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
+
+            var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
+
+            // Act
+            var result = await handler.FileExistsAsync("nonexistent.txt", "//server/share/path");
+
+            // Assert
+            Assert.False(result);
+        }
+
+        [Fact]
+        public async Task FileExistsAsync_CaseInsensitive_ReturnsTrue()
+        {
+            // Arrange
+            var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
+            var mockProcess = new Mock<IProcessWrapper>();
+
+            var smbClientOutput = @"  File1.TXT                          A    12345  Mon Jan 29 10:00:00 2026";
+
+            mockProcess
+                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
+
+            var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
+
+            // Act
+            var result = await handler.FileExistsAsync("file1.txt", "//server/share/path");
+
+            // Assert
+            Assert.True(result);
+        }
+
+        [Fact]
+        public async Task FileExistsAsync_EmptyDirectory_ReturnsFalse()
+        {
+            // Arrange
+            var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
+            var mockProcess = new Mock<IProcessWrapper>();
+
+            var smbClientOutput = @"  .                                  D        0  Wed Jan 31 12:00:00 2026
+  ..                                 D        0  Wed Jan 31 12:00:00 2026";
+
+            mockProcess
+                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
+
+            var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
+
+            // Act
+            var result = await handler.FileExistsAsync("anyfile.txt", "//server/share");
+
+            // Assert
+            Assert.False(result);
+        }
+    }
+
+    /// <summary>
     /// Tests for authentication modes
     /// </summary>
     public class SmbClientFileHandlerAuthenticationTests

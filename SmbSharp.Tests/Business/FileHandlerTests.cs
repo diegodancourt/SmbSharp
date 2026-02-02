@@ -202,6 +202,103 @@ namespace SmbSharp.Tests.Business
     }
 
     /// <summary>
+    /// Unit tests for FileHandler.FileExistsAsync
+    /// </summary>
+    public class FileHandlerFileExistsTests
+    {
+        private FileHandler CreateHandler()
+        {
+            if (OperatingSystem.IsWindows() || OperatingSystem.IsLinux())
+            {
+                var mockLogger = new Mock<ILogger<FileHandler>>();
+                var mockSmbClient = new Mock<ISmbClientFileHandler>();
+                mockSmbClient.Setup(x => x.IsSmbClientAvailable()).Returns(true);
+                return new FileHandler(mockLogger.Object, mockSmbClient.Object);
+            }
+            throw new PlatformNotSupportedException("Tests can only run on Windows or Linux");
+        }
+
+        [Fact]
+        public async Task FileExistsAsync_NullFileName_ShouldThrowArgumentException()
+        {
+            // Arrange
+            var handler = CreateHandler();
+
+            // Act & Assert
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                handler.FileExistsAsync(null!, "//server/share"));
+        }
+
+        [Fact]
+        public async Task FileExistsAsync_EmptyFileName_ShouldThrowArgumentException()
+        {
+            // Arrange
+            var handler = CreateHandler();
+
+            // Act & Assert
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                handler.FileExistsAsync("", "//server/share"));
+        }
+
+        [Fact]
+        public async Task FileExistsAsync_WhitespaceFileName_ShouldThrowArgumentException()
+        {
+            // Arrange
+            var handler = CreateHandler();
+
+            // Act & Assert
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                handler.FileExistsAsync("   ", "//server/share"));
+        }
+
+        [Fact]
+        public async Task FileExistsAsync_NullDirectory_ShouldThrowArgumentException()
+        {
+            // Arrange
+            var handler = CreateHandler();
+
+            // Act & Assert
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                handler.FileExistsAsync("file.txt", null!));
+        }
+
+        [Fact]
+        public async Task FileExistsAsync_EmptyDirectory_ShouldThrowArgumentException()
+        {
+            // Arrange
+            var handler = CreateHandler();
+
+            // Act & Assert
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                handler.FileExistsAsync("file.txt", ""));
+        }
+
+        [Fact]
+        public async Task FileExistsAsync_WhitespaceDirectory_ShouldThrowArgumentException()
+        {
+            // Arrange
+            var handler = CreateHandler();
+
+            // Act & Assert
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                handler.FileExistsAsync("file.txt", "   "));
+        }
+
+        [Fact]
+        public async Task FileExistsAsync_WithCancellationToken_ShouldRespectCancellation()
+        {
+            // Arrange
+            var handler = CreateHandler();
+            var cts = new CancellationTokenSource();
+            cts.Cancel();
+
+            // Act & Assert
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                handler.FileExistsAsync("file.txt", "//nonexistent/share", cts.Token));
+        }
+    }
+
+    /// <summary>
     /// Unit tests for FileHandler.ReadFileAsync
     /// </summary>
     public class FileHandlerReadFileTests

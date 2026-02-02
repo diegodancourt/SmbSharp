@@ -18,6 +18,18 @@
         Task<IEnumerable<string>> EnumerateFilesAsync(string directory, CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Checks if a file exists in the specified directory on an SMB share.
+        /// </summary>
+        /// <param name="fileName">The name of the file to check (not full path, just file name)</param>
+        /// <param name="directory">The SMB directory path (e.g., "//server/share/path" or "\\server\share\path")</param>
+        /// <param name="cancellationToken">Token to cancel the operation</param>
+        /// <returns>True if the file exists, false otherwise</returns>
+        /// <exception cref="DirectoryNotFoundException">Thrown when the directory does not exist or is not accessible</exception>
+        /// <exception cref="IOException">Thrown when the SMB operation fails</exception>
+        /// <exception cref="OperationCanceledException">Thrown when the operation is cancelled</exception>
+        Task<bool> FileExistsAsync(string fileName, string directory, CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Opens a file for reading from an SMB share and returns a stream.
         /// The caller is responsible for disposing the returned stream.
         /// </summary>

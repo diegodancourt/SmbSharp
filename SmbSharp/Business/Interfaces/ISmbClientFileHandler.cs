@@ -22,6 +22,15 @@ namespace SmbSharp.Business.Interfaces
         Task<IEnumerable<string>> EnumerateFilesAsync(string smbPath, CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Checks if a file exists in the specified SMB directory.
+        /// </summary>
+        /// <param name="fileName">The name of the file to check.</param>
+        /// <param name="smbPath">The SMB path in UNC format (e.g., \\server\share\path).</param>
+        /// <param name="cancellationToken">A token to cancel the operation.</param>
+        /// <returns>True if the file exists; otherwise, false.</returns>
+        Task<bool> FileExistsAsync(string fileName, string smbPath, CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Gets a stream to read a file from the specified SMB path.
         /// </summary>
         /// <param name="smbPath">The SMB path in UNC format (e.g., \\server\share\path).</param>

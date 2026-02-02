@@ -120,6 +120,21 @@ namespace SmbSharp.Business.SmbClient
             return files;
         }
 
+        public async Task<bool> FileExistsAsync(string fileName, string smbPath,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var files = await EnumerateFilesAsync(smbPath, cancellationToken);
+                return files.Any(f => f.Equals(fileName, StringComparison.OrdinalIgnoreCase));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error checking if file exists: {FileName} in {SmbPath}", fileName, smbPath);
+                throw;
+            }
+        }
+
         public async Task<Stream> GetFileStreamAsync(string smbPath, string fileName,
             CancellationToken cancellationToken = default)
         {

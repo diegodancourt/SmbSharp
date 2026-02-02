@@ -84,6 +84,30 @@ namespace SmbSharp.Business
         }
 
         /// <inheritdoc/>
+        public async Task<bool> FileExistsAsync(string fileName, string directory,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(fileName))
+                throw new ArgumentException("File name cannot be null or empty", nameof(fileName));
+            if (string.IsNullOrWhiteSpace(directory))
+                throw new ArgumentException("Directory path cannot be null or empty", nameof(directory));
+
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return await _smbClientFileHandler.FileExistsAsync(fileName, directory, cancellationToken);
+            }
+
+            // On Windows, use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
+            return await Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var filePath = Path.Combine(directory, fileName);
+                return File.Exists(filePath);
+            }, cancellationToken);
+        }
+
+        /// <inheritdoc/>
         public async Task<Stream> ReadFileAsync(string directory, string fileName,
             CancellationToken cancellationToken = default)
         {
