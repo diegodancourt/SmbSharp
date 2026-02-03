@@ -88,6 +88,7 @@ namespace SmbSharp.Infrastructure
 
                 if (result.ExitCode != 0)
                 {
+                    _logger.LogDebug("Process stdout: {StandardOutput}", result.StandardOutput);
                     _logger.LogDebug("Process stderr: {StandardError}", result.StandardError);
                 }
             }

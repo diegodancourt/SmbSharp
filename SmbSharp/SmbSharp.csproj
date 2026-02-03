@@ -11,7 +11,7 @@
         <!-- NuGet Package Configuration -->
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <PackageId>SmbSharp</PackageId>
-        <Version>1.0.8</Version>
+        <Version>1.0.9</Version>
         <Authors>Diego Dancourt</Authors>
         <Company>Diego Dancourt</Company>
         <Product>SmbSharp</Product>
@@ -22,7 +22,7 @@
         <RepositoryUrl>https://github.com/diegodancourt/SmbSharp</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
         <PackageTags>smb;cifs;smbclient;file;share;network;kerberos;cross-platform</PackageTags>
-        <PackageReleaseNotes>v1.0.8: Fixed health check bug where subdirectories were not being validated. CanConnectAsync now properly navigates to subdirectories when checking SMB share connectivity.</PackageReleaseNotes>
+        <PackageReleaseNotes>v1.0.9: Enhanced debug logging to include stdout when processes fail. This helps troubleshoot smbclient errors that only appear in standard output.</PackageReleaseNotes>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
     </PropertyGroup>
