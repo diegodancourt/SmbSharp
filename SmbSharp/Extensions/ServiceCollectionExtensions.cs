@@ -177,7 +177,10 @@ namespace SmbSharp.Extensions
 
             return builder.Add(new HealthCheckRegistration(
                 name ?? "smb_share",
-                sp => new SmbShareHealthCheck(sp.GetRequiredService<IFileHandler>(), directoryPath),
+                sp => new SmbShareHealthCheck(
+                    sp.GetRequiredService<IFileHandler>(),
+                    directoryPath,
+                    sp.GetService<ILogger<SmbShareHealthCheck>>()),
                 failureStatus,
                 tags,
                 timeout));

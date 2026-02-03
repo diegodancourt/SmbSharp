@@ -332,6 +332,27 @@ app.MapHealthChecks("/health", new HealthCheckOptions
 }
 ```
 
+### Health Check Logging
+
+When health checks fail, error logs are automatically generated to help troubleshoot connectivity issues:
+
+```csharp
+// Enable logging in your appsettings.json
+{
+  "Logging": {
+    "LogLevel": {
+      "SmbSharp.HealthChecks.SmbShareHealthCheck": "Error"
+    }
+  }
+}
+```
+
+**Example error log:**
+```
+[Error] Health check failed: Unable to connect to SMB share: //server/share/folder
+[Error] Health check failed for SMB share //server/share/folder: Access denied
+```
+
 ## API Reference
 
 ### IFileHandler Interface
