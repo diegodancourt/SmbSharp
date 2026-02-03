@@ -327,8 +327,9 @@ namespace SmbSharp.Business.SmbClient
 
                 // SECURITY: Pass password via environment variable instead of command line
                 // This prevents password from being visible in process listings
+                // Explicitly disable Kerberos to force NTLM authentication (important for IP-based connections)
                 arguments =
-                    $"//{escapedServer}/{escapedShare} -U \"{EscapeShellArgument(userArg)}\" -c \"{EscapeCommandString(command)}\"";
+                    $"//{escapedServer}/{escapedShare} --use-kerberos=disabled -U \"{EscapeShellArgument(userArg)}\" -c \"{EscapeCommandString(command)}\"";
                 environmentVariables = new Dictionary<string, string>
                 {
                     ["PASSWD"] = _password ?? string.Empty
