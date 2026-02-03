@@ -100,6 +100,45 @@ namespace SmbSharp.Extensions
         }
 
         /// <summary>
+        /// Adds SmbSharp services to the DI container with custom configuration that has access to the service provider.
+        /// </summary>
+        /// <param name="services">The service collection</param>
+        /// <param name="configure">Configuration action that accepts the service provider and SmbSharp options</param>
+        /// <returns>The service collection for chaining</returns>
+        public static IServiceCollection AddSmbSharp(this IServiceCollection services,
+            Action<IServiceProvider, SmbSharpOptions> configure)
+        {
+            services.AddSingleton<IProcessWrapper, ProcessWrapper>();
+
+            services.AddScoped<ISmbClientFileHandler>(sp =>
+            {
+                var options = new SmbSharpOptions();
+                configure(sp, options);
+
+                var logger = sp.GetRequiredService<ILogger<SmbClientFileHandler>>();
+                var processWrapper = sp.GetRequiredService<IProcessWrapper>();
+
+                if (options.UseKerberos)
+                {
+                    return new SmbClientFileHandler(logger, processWrapper, true);
+                }
+                else
+                {
+                    if (string.IsNullOrEmpty(options.Username) || string.IsNullOrEmpty(options.Password))
+                    {
+                        throw new ArgumentException(
+                            "Username and password are required when not using Kerberos authentication");
+                    }
+
+                    return new SmbClientFileHandler(logger, processWrapper, false, options.Username, options.Password, options.Domain);
+                }
+            });
+
+            services.AddScoped<IFileHandler, FileHandler>();
+            return services;
+        }
+
+        /// <summary>
         /// Adds an SMB share health check to the health checks builder.
         /// </summary>
         /// <param name="builder">The health checks builder</param>

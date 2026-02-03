@@ -168,6 +168,156 @@ namespace SmbSharp.Tests.Extensions
             // Assert
             Assert.Same(services, result);
         }
+
+        [Fact]
+        public void AddSmbSharp_WithServiceProviderAndOptions_UseKerberos_ShouldRegisterService()
+        {
+            // Arrange
+            var services = new ServiceCollection();
+            services.AddLogging();
+
+            // Act
+            services.AddSmbSharp((sp, options) =>
+            {
+                options.UseKerberos = true;
+            });
+            var serviceProvider = services.BuildServiceProvider();
+
+            // Assert
+            var fileHandler = serviceProvider.GetService<IFileHandler>();
+            Assert.NotNull(fileHandler);
+        }
+
+        [Fact]
+        public void AddSmbSharp_WithServiceProviderAndOptions_UsernamePassword_ShouldRegisterService()
+        {
+            // Arrange
+            var services = new ServiceCollection();
+            services.AddLogging();
+
+            // Act
+            services.AddSmbSharp((sp, options) =>
+            {
+                options.UseKerberos = false;
+                options.Username = "username";
+                options.Password = "password";
+                options.Domain = "DOMAIN";
+            });
+            var serviceProvider = services.BuildServiceProvider();
+
+            // Assert
+            var fileHandler = serviceProvider.GetService<IFileHandler>();
+            Assert.NotNull(fileHandler);
+        }
+
+        [Fact]
+        public void AddSmbSharp_WithServiceProviderAndOptions_CanAccessServiceProvider()
+        {
+            // Arrange
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton<ITestSecretProvider>(new TestSecretProvider("test-password"));
+
+            // Act
+            services.AddSmbSharp((sp, options) =>
+            {
+                var secretProvider = sp.GetRequiredService<ITestSecretProvider>();
+                options.UseKerberos = false;
+                options.Username = "username";
+                options.Password = secretProvider.GetSecret();
+                options.Domain = "DOMAIN";
+            });
+            var serviceProvider = services.BuildServiceProvider();
+
+            // Assert
+            var fileHandler = serviceProvider.GetService<IFileHandler>();
+            Assert.NotNull(fileHandler);
+        }
+
+        [Fact]
+        public void AddSmbSharp_WithServiceProviderAndOptions_NoKerberosNoUsername_ShouldThrowArgumentException()
+        {
+            // Arrange
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSmbSharp((sp, options) =>
+            {
+                options.UseKerberos = false;
+                // Missing username and password
+            });
+            var serviceProvider = services.BuildServiceProvider();
+
+            // Act & Assert
+            var exception = Assert.Throws<ArgumentException>(() =>
+            {
+                var fileHandler = serviceProvider.GetService<IFileHandler>();
+            });
+
+            Assert.Contains("Username and password are required", exception.Message);
+        }
+
+        [Fact]
+        public void AddSmbSharp_WithServiceProviderAndOptions_NoKerberosNoPassword_ShouldThrowArgumentException()
+        {
+            // Arrange
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSmbSharp((sp, options) =>
+            {
+                options.UseKerberos = false;
+                options.Username = "username";
+                // Missing password
+            });
+            var serviceProvider = services.BuildServiceProvider();
+
+            // Act & Assert
+            var exception = Assert.Throws<ArgumentException>(() =>
+            {
+                var fileHandler = serviceProvider.GetService<IFileHandler>();
+            });
+
+            Assert.Contains("Username and password are required", exception.Message);
+        }
+
+        [Fact]
+        public void AddSmbSharp_WithServiceProviderAndOptions_ShouldReturnServiceCollection_ForChaining()
+        {
+            // Arrange
+            var services = new ServiceCollection();
+            services.AddLogging();
+
+            // Act
+            var result = services.AddSmbSharp((sp, options) =>
+            {
+                options.UseKerberos = true;
+            });
+
+            // Assert
+            Assert.Same(services, result);
+        }
+    }
+
+    /// <summary>
+    /// Test helper interface for secret provider
+    /// </summary>
+    public interface ITestSecretProvider
+    {
+        string GetSecret();
+    }
+
+    /// <summary>
+    /// Test helper implementation for secret provider
+    /// </summary>
+    public class TestSecretProvider : ITestSecretProvider
+    {
+        private readonly string _secret;
+
+        public TestSecretProvider(string secret)
+        {
+            _secret = secret;
+        }
+
+        public string GetSecret() => _secret;
     }
 
     /// <summary>
