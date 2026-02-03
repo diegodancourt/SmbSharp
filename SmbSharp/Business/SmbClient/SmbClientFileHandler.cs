@@ -427,10 +427,10 @@ namespace SmbSharp.Business.SmbClient
             try
             {
                 // Parse SMB path: //server/share/path or \\server\share\path
-                var (server, share, _) = ParseSmbPath(directoryPath);
+                var (server, share, path) = ParseSmbPath(directoryPath);
 
-                // Try to list files to test connection
-                var command = "ls";
+                // Try to list files to test connection - if path is specified, check that specific directory
+                var command = string.IsNullOrEmpty(path) ? "ls" : $"cd \"{path}\"; ls";
                 await ExecuteSmbClientCommandAsync(server, share, command, directoryPath, cancellationToken);
 
                 return true;

@@ -853,6 +853,58 @@ namespace SmbSharp.Tests.Business.SmbClient
             // Assert
             Assert.False(result);
         }
+
+        [Fact]
+        public async Task CanConnectAsync_WithSubdirectory_UsesCorrectCommand()
+        {
+            // Arrange
+            var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
+            var mockProcess = new Mock<IProcessWrapper>();
+            string? capturedArguments = null;
+
+            mockProcess
+                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" })
+                .Callback<string, string, IDictionary<string, string>?, CancellationToken>((cmd, args, env, ct) => capturedArguments = args);
+
+            var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
+
+            // Act
+            var result = await handler.CanConnectAsync("//server/share/path/to/directory");
+
+            // Assert
+            Assert.True(result);
+            Assert.NotNull(capturedArguments);
+            // Command string gets escaped, so quotes become \"
+            Assert.Contains(@"cd \""path/to/directory\""", capturedArguments);
+            Assert.Contains("ls", capturedArguments);
+        }
+
+        [Fact]
+        public async Task CanConnectAsync_WithBackslashPath_UsesCorrectCommand()
+        {
+            // Arrange
+            var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
+            var mockProcess = new Mock<IProcessWrapper>();
+            string? capturedArguments = null;
+
+            mockProcess
+                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" })
+                .Callback<string, string, IDictionary<string, string>?, CancellationToken>((cmd, args, env, ct) => capturedArguments = args);
+
+            var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
+
+            // Act - using backslashes like Windows UNC path
+            var result = await handler.CanConnectAsync(@"\\server\share\path\to\directory");
+
+            // Assert
+            Assert.True(result);
+            Assert.NotNull(capturedArguments);
+            // Path should be converted to forward slashes for smbclient, and command string gets escaped
+            Assert.Contains(@"cd \""path/to/directory\""", capturedArguments);
+            Assert.Contains("ls", capturedArguments);
+        }
     }
 
 }
