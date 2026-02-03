@@ -334,7 +334,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             mockProcess
                 .Setup(x => x.ExecuteAsync(
                     "smbclient",
-                    It.Is<string>(args => args.Contains("TESTDOMAIN\\\\testuser")),
+                    It.Is<string>(args => args.Contains("TESTDOMAIN\\testuser")),
                     It.IsAny<IDictionary<string, string>>(),
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });

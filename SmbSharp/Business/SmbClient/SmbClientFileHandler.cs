@@ -305,9 +305,10 @@ namespace SmbSharp.Business.SmbClient
         private async Task<string> ExecuteSmbClientCommandAsync(string server, string share, string command,
             string contextPath, CancellationToken cancellationToken = default)
         {
-            // Escape server and share to prevent command injection
-            var escapedServer = EscapeShellArgument(server);
-            var escapedShare = EscapeShellArgument(share);
+            // Note: No shell escaping needed since UseShellExecute=false in ProcessWrapper
+            // ProcessStartInfo passes arguments directly to the process without shell interpretation
+            // However, we still need to escape quotes within the smbclient -c command parameter
+            var escapedCommand = command.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
             string arguments;
             Dictionary<string, string>? environmentVariables = null;
@@ -316,7 +317,7 @@ namespace SmbSharp.Business.SmbClient
             {
                 // Use Kerberos authentication (kinit ticket). Modern smbclient versions use --use-kerberos
                 arguments =
-                    $"//{escapedServer}/{escapedShare} --use-kerberos=required -c \"{EscapeCommandString(command)}\"";
+                    $"//{server}/{share} --use-kerberos=required -c \"{escapedCommand}\"";
             }
             else
             {
@@ -329,7 +330,7 @@ namespace SmbSharp.Business.SmbClient
                 // This prevents password from being visible in process listings
                 // Explicitly disable Kerberos to force NTLM authentication (important for IP-based connections)
                 arguments =
-                    $"//{escapedServer}/{escapedShare} --use-kerberos=disabled -U \"{EscapeShellArgument(userArg)}\" -c \"{EscapeCommandString(command)}\"";
+                    $"//{server}/{share} --use-kerberos=disabled -U \"{userArg}\" -c \"{escapedCommand}\"";
                 environmentVariables = new Dictionary<string, string>
                 {
                     ["PASSWD"] = _password ?? string.Empty

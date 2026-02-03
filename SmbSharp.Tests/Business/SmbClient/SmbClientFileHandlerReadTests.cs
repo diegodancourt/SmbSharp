@@ -235,10 +235,10 @@ namespace SmbSharp.Tests.Business.SmbClient
             var stream = await handler.GetFileStreamAsync("//server/share", "file.txt");
             stream.Dispose();
 
-            // Assert - Verify domain is included in username (with escaped backslash)
+            // Assert - Verify domain is included in username
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("TESTDOMAIN\\\\testuser")),
+                It.Is<string>(args => args.Contains("TESTDOMAIN\\testuser")),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
