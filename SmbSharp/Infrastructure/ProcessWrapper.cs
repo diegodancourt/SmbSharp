@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.Logging;
 using SmbSharp.Infrastructure.Interfaces;
 
 namespace SmbSharp.Infrastructure
@@ -10,11 +11,30 @@ namespace SmbSharp.Infrastructure
     [ExcludeFromCodeCoverage]
     internal class ProcessWrapper : IProcessWrapper
     {
+        private readonly ILogger<ProcessWrapper>? _logger;
+
+        public ProcessWrapper(ILogger<ProcessWrapper>? logger = null)
+        {
+            _logger = logger;
+        }
+
         /// <inheritdoc/>
         public async Task<ProcessResult> ExecuteAsync(string fileName, string arguments,
             IDictionary<string, string>? environmentVariables = null,
             CancellationToken cancellationToken = default)
         {
+            // Log the command being executed (but not sensitive data like passwords)
+            if (_logger?.IsEnabled(LogLevel.Debug) == true)
+            {
+                _logger.LogDebug("Executing process: {FileName} {Arguments}", fileName, arguments);
+
+                if (environmentVariables != null && environmentVariables.Count > 0)
+                {
+                    var envVarNames = string.Join(", ", environmentVariables.Keys);
+                    _logger.LogDebug("Environment variables set: {EnvironmentVariables}", envVarNames);
+                }
+            }
+
             var processStartInfo = new ProcessStartInfo
             {
                 FileName = fileName,
@@ -54,12 +74,25 @@ namespace SmbSharp.Infrastructure
             await process.WaitForExitAsync(cancellationToken);
 #endif
 
-            return new ProcessResult
+            var result = new ProcessResult
             {
                 ExitCode = process.ExitCode,
                 StandardOutput = output,
                 StandardError = error
             };
+
+            // Log the result
+            if (_logger?.IsEnabled(LogLevel.Debug) == true)
+            {
+                _logger.LogDebug("Process exited with code: {ExitCode}", result.ExitCode);
+
+                if (result.ExitCode != 0)
+                {
+                    _logger.LogDebug("Process stderr: {StandardError}", result.StandardError);
+                }
+            }
+
+            return result;
         }
     }
 }

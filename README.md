@@ -387,6 +387,27 @@ catch (PlatformNotSupportedException ex)
 }
 ```
 
+## Debugging
+
+To troubleshoot authentication issues or see exactly what commands are being sent to smbclient, enable debug logging:
+
+```csharp
+// In Program.cs or appsettings.json
+builder.Logging.SetMinimumLevel(LogLevel.Debug);
+
+// Or configure specific loggers
+builder.Logging.AddFilter("SmbSharp.Infrastructure.ProcessWrapper", LogLevel.Debug);
+```
+
+**Example debug output:**
+```
+Executing process: smbclient //server/share -U "username" -c "ls folder/*"
+Environment variables set: PASSWD
+Process exited with code: 0
+```
+
+**Note:** Passwords are never logged. Only environment variable names (like `PASSWD`) are shown, not their values.
+
 ## Performance Considerations
 
 ### Windows

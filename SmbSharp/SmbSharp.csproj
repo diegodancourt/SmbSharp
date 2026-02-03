@@ -11,7 +11,7 @@
         <!-- NuGet Package Configuration -->
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <PackageId>SmbSharp</PackageId>
-        <Version>1.0.5</Version>
+        <Version>1.0.6</Version>
         <Authors>Diego Dancourt</Authors>
         <Company>Diego Dancourt</Company>
         <Product>SmbSharp</Product>
@@ -22,7 +22,7 @@
         <RepositoryUrl>https://github.com/diegodancourt/SmbSharp</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
         <PackageTags>smb;cifs;smbclient;file;share;network;kerberos;cross-platform</PackageTags>
-        <PackageReleaseNotes>v1.0.5: Added AddSmbSharp overload that accepts IServiceProvider in the configuration action, enabling dependency resolution during SmbSharp configuration. This allows retrieving credentials from other services like secret managers.</PackageReleaseNotes>
+        <PackageReleaseNotes>v1.0.6: Added debug logging to ProcessWrapper to help troubleshoot authentication issues. When debug logging is enabled, users can see the exact smbclient commands being executed (passwords are never logged for security).</PackageReleaseNotes>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
     </PropertyGroup>

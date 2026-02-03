@@ -23,7 +23,11 @@ namespace SmbSharp.Extensions
         /// <returns>The service collection for chaining</returns>
         public static IServiceCollection AddSmbSharp(this IServiceCollection services)
         {
-            services.AddSingleton<IProcessWrapper, ProcessWrapper>();
+            services.AddSingleton<IProcessWrapper>(sp =>
+            {
+                var logger = sp.GetRequiredService<ILogger<ProcessWrapper>>();
+                return new ProcessWrapper(logger);
+            });
             services.AddScoped<ISmbClientFileHandler>(sp =>
             {
                 var logger = sp.GetRequiredService<ILogger<SmbClientFileHandler>>();
@@ -45,7 +49,11 @@ namespace SmbSharp.Extensions
         public static IServiceCollection AddSmbSharp(this IServiceCollection services, string username, string password,
             string domain)
         {
-            services.AddSingleton<IProcessWrapper, ProcessWrapper>();
+            services.AddSingleton<IProcessWrapper>(sp =>
+            {
+                var logger = sp.GetRequiredService<ILogger<ProcessWrapper>>();
+                return new ProcessWrapper(logger);
+            });
             services.AddScoped<ISmbClientFileHandler>(sp =>
             {
                 var logger = sp.GetRequiredService<ILogger<SmbClientFileHandler>>();
@@ -68,7 +76,11 @@ namespace SmbSharp.Extensions
             var options = new SmbSharpOptions();
             configure(options);
 
-            services.AddSingleton<IProcessWrapper, ProcessWrapper>();
+            services.AddSingleton<IProcessWrapper>(sp =>
+            {
+                var logger = sp.GetRequiredService<ILogger<ProcessWrapper>>();
+                return new ProcessWrapper(logger);
+            });
 
             if (options.UseKerberos)
             {
@@ -108,7 +120,11 @@ namespace SmbSharp.Extensions
         public static IServiceCollection AddSmbSharp(this IServiceCollection services,
             Action<IServiceProvider, SmbSharpOptions> configure)
         {
-            services.AddSingleton<IProcessWrapper, ProcessWrapper>();
+            services.AddSingleton<IProcessWrapper>(sp =>
+            {
+                var logger = sp.GetRequiredService<ILogger<ProcessWrapper>>();
+                return new ProcessWrapper(logger);
+            });
 
             services.AddScoped<ISmbClientFileHandler>(sp =>
             {
