@@ -316,6 +316,7 @@ namespace SmbSharp.Business.SmbClient
             if (_useKerberos)
             {
                 // Use Kerberos authentication (kinit ticket). Modern smbclient versions use --use-kerberos
+                // NOTE: Quotes around command are needed for smbclient to parse the -c parameter correctly
                 arguments =
                     $"//{server}/{share} --use-kerberos=required -c \"{escapedCommand}\"";
             }
@@ -329,12 +330,20 @@ namespace SmbSharp.Business.SmbClient
                 // SECURITY: Pass password via environment variable instead of command line
                 // This prevents password from being visible in process listings
                 // Explicitly disable Kerberos to force NTLM authentication (important for IP-based connections)
+                // NOTE: No quotes around userArg - ProcessStartInfo.Arguments parser on Linux doubles backslashes inside quotes
                 arguments =
-                    $"//{server}/{share} --use-kerberos=disabled -U \"{userArg}\" -c \"{escapedCommand}\"";
+                    $"//{server}/{share} --use-kerberos=disabled -U {userArg} -c \"{escapedCommand}\"";
                 environmentVariables = new Dictionary<string, string>
                 {
                     ["PASSWD"] = _password ?? string.Empty
                 };
+            }
+
+            // Log the exact command for debugging
+            _logger.LogDebug("Executing smbclient with arguments: {Arguments}", arguments);
+            if (environmentVariables != null && environmentVariables.ContainsKey("PASSWD"))
+            {
+                _logger.LogDebug("PASSWD environment variable is set (value hidden)");
             }
 
             var result = await _processWrapper.ExecuteAsync("smbclient", arguments, environmentVariables, cancellationToken);

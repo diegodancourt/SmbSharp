@@ -1,0 +1,11 @@
+# 1. Check the actual SmbSharp version being used
+kubectl exec -it <your-pod-name> -- cat /app/ReceiptService.deps.json | grep -A 2 "SmbSharp/"
+
+# 2. Test the manual command with SINGLE backslash (should work)
+kubectl exec -it <your-pod-name> -- bash -c 'PASSWD="<password>" smbclient //10.146.163.89/pl-2t-inf-sss-testdbbackup-01 --use-kerberos=disabled -U "STORMWIND\app-StoresPdRcpt-QA" -c "cd \"Payment-test/ReceiptService/BestBuy\"; ls"'
+
+# 3. Test with DOUBLE backslash (should fail)
+kubectl exec -it <your-pod-name> -- bash -c 'PASSWD="<password>" smbclient //10.146.163.89/pl-2t-inf-sss-testdbbackup-01 --use-kerberos=disabled -U "STORMWIND\\app-StoresPdRcpt-QA" -c "cd \"Payment-test/ReceiptService/BestBuy\"; ls"'
+
+# 4. Check the exact arguments being passed (from process list during health check)
+kubectl exec -it <your-pod-name> -- ps aux | grep smbclient

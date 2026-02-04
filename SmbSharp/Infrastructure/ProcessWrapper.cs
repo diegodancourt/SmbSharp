@@ -27,6 +27,12 @@ namespace SmbSharp.Infrastructure
             if (_logger?.IsEnabled(LogLevel.Debug) == true)
             {
                 _logger.LogDebug("Executing process: {FileName} {Arguments}", fileName, arguments);
+                _logger.LogDebug("Full command line would be: {FileName} {Arguments}", fileName, arguments);
+
+                // Log each character in the arguments to debug encoding issues
+                _logger.LogDebug("Arguments length: {Length}, bytes: {Bytes}",
+                    arguments.Length,
+                    string.Join(" ", arguments.Select((c, i) => $"{i}:{(int)c:X2}")));
 
                 if (environmentVariables != null && environmentVariables.Count > 0)
                 {
