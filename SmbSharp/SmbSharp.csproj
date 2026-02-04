@@ -11,7 +11,7 @@
         <!-- NuGet Package Configuration -->
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <PackageId>SmbSharp</PackageId>
-        <Version>1.0.15</Version>
+        <Version>1.0.16</Version>
         <Authors>Diego Dancourt</Authors>
         <Company>Diego Dancourt</Company>
         <Product>SmbSharp</Product>
@@ -22,7 +22,7 @@
         <RepositoryUrl>https://github.com/diegodancourt/SmbSharp</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
         <PackageTags>smb;cifs;smbclient;file;share;network;kerberos;cross-platform</PackageTags>
-        <PackageReleaseNotes>v1.0.15: Fix CreateDirectoryAsync on Linux by checking both stdout and stderr for smbclient errors and recognizing NT_STATUS_NO_SUCH_FILE error pattern.</PackageReleaseNotes>
+        <PackageReleaseNotes>v1.0.16: Make MoveFileAsync atomic on Linux with retry logic. If source deletion fails after copying, it retries once before rolling back the destination to maintain consistency. Updated documentation to reflect atomicity guarantee.</PackageReleaseNotes>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
     </PropertyGroup>

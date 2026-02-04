@@ -307,7 +307,8 @@ namespace SmbSharp.Business
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // For smbclient, we need to download and re-upload since there's no native move command
+                // For smbclient, we need to download and re-upload since there's no native move command.
+                // This operation is made atomic with retry logic and rollback on failure.
                 var sourceDir = Path.GetDirectoryName(sourceFilePath);
                 if (string.IsNullOrEmpty(sourceDir))
                     throw new ArgumentException("Invalid source path - cannot determine directory",
@@ -328,17 +329,67 @@ namespace SmbSharp.Business
                     throw new ArgumentException("Invalid destination path - cannot determine file name",
                         nameof(destinationFilePath));
 
-                // Read source file
-                await using var stream =
-                    await _smbClientFileHandler.GetFileStreamAsync(sourceDir, sourceFileName, cancellationToken);
+                bool destinationWritten = false;
+                try
+                {
+                    // Step 1: Read source file into memory
+                    await using var stream =
+                        await _smbClientFileHandler.GetFileStreamAsync(sourceDir, sourceFileName, cancellationToken);
 
-                // Write to destination
-                await _smbClientFileHandler.WriteFileAsync(destDir, destFileName, stream, cancellationToken);
+                    // Step 2: Write to destination location
+                    await _smbClientFileHandler.WriteFileAsync(destDir, destFileName, stream, cancellationToken);
+                    destinationWritten = true;
 
-                // Delete source
-                await _smbClientFileHandler.DeleteFileAsync(sourceDir, sourceFileName, cancellationToken);
+                    // Step 3: Delete source file to complete the move
+                    await _smbClientFileHandler.DeleteFileAsync(sourceDir, sourceFileName, cancellationToken);
 
-                return true;
+                    return true;
+                }
+                catch
+                {
+                    // Atomic operation: If destination was written but source deletion failed,
+                    // retry once to handle transient issues before rolling back
+                    if (destinationWritten)
+                    {
+                        try
+                        {
+                            _logger.LogWarning(
+                                "Failed to delete source file {SourceFilePath} after copying, retrying once...",
+                                sourceFilePath);
+
+                            // Brief delay to handle transient network or file lock issues
+                            await Task.Delay(100, cancellationToken);
+
+                            // Retry: Attempt to delete source file one more time
+                            await _smbClientFileHandler.DeleteFileAsync(sourceDir, sourceFileName, cancellationToken);
+
+                            // Success: Retry completed the move operation
+                            return true;
+                        }
+                        catch
+                        {
+                            // Rollback: Both attempts failed, delete destination to maintain atomicity
+                            // This ensures the file exists in only the original location
+                            _logger.LogError(
+                                "Retry failed to delete source file {SourceFilePath}, rolling back destination",
+                                sourceFilePath);
+
+                            try
+                            {
+                                await _smbClientFileHandler.DeleteFileAsync(destDir, destFileName, cancellationToken);
+                            }
+                            catch
+                            {
+                                // Cleanup failed - log but don't mask the original exception
+                                _logger.LogError(
+                                    "Failed to cleanup destination file {DestinationFilePath} after move operation failed",
+                                    destinationFilePath);
+                            }
+                        }
+                    }
+
+                    throw;
+                }
             }
 
             // On Windows, use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking

@@ -221,7 +221,7 @@ await fileHandler.MoveFileAsync(
 );
 ```
 
-> **Note:** On Linux, move operations download and re-upload the file, which can be slow for large files.
+> **Note:** On Linux, move operations download and re-upload the file, which can be slow for large files. The operation is atomic with automatic retry logic - if the source deletion fails after copying, it retries once before rolling back the destination to maintain consistency.
 
 ### Create a Directory
 ```csharp

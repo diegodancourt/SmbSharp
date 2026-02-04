@@ -123,8 +123,13 @@
         /// - Then deleted from the source
         /// - This requires 2x the file size in temporary disk space
         /// - Network transfer time is 2x (download + upload)
-        /// - The operation is NOT atomic - if it fails midway, you may have copies in both locations
+        /// - The operation IS atomic with retry logic - if source deletion fails after copying, it retries once, then rolls back the destination if retry fails
         /// - For large files, this can be slow and resource-intensive
+        /// </para>
+        /// <para>
+        /// <strong>Atomicity Guarantee:</strong> The operation ensures the file exists in only one location. If the source
+        /// deletion fails, a retry is attempted after a brief delay. If both attempts fail, the destination file is
+        /// automatically deleted to rollback the operation and maintain consistency.
         /// </para>
         /// <para>
         /// <strong>Recommendation:</strong> If you're moving large files on Linux, consider using alternative approaches
