@@ -8,6 +8,42 @@ using SmbSharp.Infrastructure.Interfaces;
 namespace SmbSharp.Tests.Business.SmbClient
 {
     /// <summary>
+    /// Helper extension methods for setting up mocks
+    /// </summary>
+    internal static class MockExtensions
+    {
+        /// <summary>
+        /// Sets up ExecuteAsync for both string and IEnumerable overloads
+        /// </summary>
+        public static void SetupSmbClient(this Mock<IProcessWrapper> mock, ProcessResult result)
+        {
+            // Setup for string-based arguments (legacy)
+            mock.Setup(x => x.ExecuteAsync(
+                    "smbclient",
+                    It.IsAny<string>(),
+                    It.IsAny<IDictionary<string, string>>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(result);
+
+            // Setup for IEnumerable<string> arguments (new)
+            mock.Setup(x => x.ExecuteAsync(
+                    "smbclient",
+                    It.IsAny<IEnumerable<string>>(),
+                    It.IsAny<IDictionary<string, string>>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(result);
+
+            // Setup for chmod (used in credentials file creation)
+            mock.Setup(x => x.ExecuteAsync(
+                    "chmod",
+                    It.IsAny<IEnumerable<string>>(),
+                    It.IsAny<IDictionary<string, string>>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "", StandardError = "" });
+        }
+    }
+
+    /// <summary>
     /// Comprehensive unit tests for SmbClientFileHandler using mocked IProcessWrapper.
     /// These tests verify all the SMB logic without requiring actual smbclient or SMB shares.
     /// </summary>
@@ -27,9 +63,7 @@ namespace SmbSharp.Tests.Business.SmbClient
 
                 12345 blocks of size 4096. 6789 blocks available";
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult
+            mockProcess.SetupSmbClient(new ProcessResult
                 {
                     ExitCode = 0,
                     StandardOutput = smbClientOutput,
@@ -59,9 +93,7 @@ namespace SmbSharp.Tests.Business.SmbClient
   subfolder                          D        0  Tue Jan 30 11:00:00 2026
   file2.doc                          A    67890  Wed Jan 31 12:00:00 2026";
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
 
@@ -86,9 +118,7 @@ namespace SmbSharp.Tests.Business.SmbClient
 
                 12345 blocks of size 4096. 6789 blocks available";
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
 
@@ -106,9 +136,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult
+            mockProcess.SetupSmbClient(new ProcessResult
                 {
                     ExitCode = 1,
                     StandardError = "NT_STATUS_OBJECT_NAME_NOT_FOUND"
@@ -128,9 +156,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult
+            mockProcess.SetupSmbClient(new ProcessResult
                 {
                     ExitCode = 1,
                     StandardError = "NT_STATUS_ACCESS_DENIED"
@@ -150,9 +176,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult
+            mockProcess.SetupSmbClient(new ProcessResult
                 {
                     ExitCode = 1,
                     StandardError = "NT_STATUS_BAD_NETWORK_NAME"
@@ -181,9 +205,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var smbClientOutput = @"  file1.txt                          A    12345  Mon Jan 29 10:00:00 2026
   file2.doc                           A    67890  Tue Jan 30 11:00:00 2026";
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
 
@@ -204,9 +226,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var smbClientOutput = @"  file1.txt                          A    12345  Mon Jan 29 10:00:00 2026
   file2.doc                           A    67890  Tue Jan 30 11:00:00 2026";
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
 
@@ -226,9 +246,7 @@ namespace SmbSharp.Tests.Business.SmbClient
 
             var smbClientOutput = @"  File1.TXT                          A    12345  Mon Jan 29 10:00:00 2026";
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
 
@@ -249,9 +267,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var smbClientOutput = @"  .                                  D        0  Wed Jan 31 12:00:00 2026
   ..                                 D        0  Wed Jan 31 12:00:00 2026";
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
 
@@ -278,7 +294,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             mockProcess
                 .Setup(x => x.ExecuteAsync(
                     "smbclient",
-                    It.Is<string>(args => args.Contains("--use-kerberos=required")),
+                    It.Is<IEnumerable<string>>(args => args.Contains("--use-kerberos=required")),
                     null,
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });
@@ -291,7 +307,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             // Assert
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("--use-kerberos=required") && !args.Contains("-U")),
+                It.Is<IEnumerable<string>>(args => args.Contains("--use-kerberos=required")),
                 null,
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -303,24 +319,18 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync(
-                    "smbclient",
-                    It.Is<string>(args => args.Contains("-U")),
-                    It.Is<IDictionary<string, string>>(env => env.ContainsKey("PASSWD") && env["PASSWD"] == "testpass"),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = "" });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, false, "testuser", "testpass", "DOMAIN");
 
             // Act
             await handler.EnumerateFilesAsync("//server/share");
 
-            // Assert - Password should be in environment variable, not command line
+            // Assert - Verify credentials file approach is used (using -A flag)
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => !args.Contains("testpass")), // Password should NOT be in args
-                It.Is<IDictionary<string, string>>(env => env["PASSWD"] == "testpass"), // Should be in env
+                It.Is<IEnumerable<string>>(args => args.Contains("-A")),
+                It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
 
@@ -331,23 +341,17 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync(
-                    "smbclient",
-                    It.Is<string>(args => args.Contains("TESTDOMAIN\\testuser")),
-                    It.IsAny<IDictionary<string, string>>(),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = "" });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, false, "testuser", "testpass", "TESTDOMAIN");
 
             // Act
             await handler.EnumerateFilesAsync("//server/share");
 
-            // Assert
+            // Assert - Verify credentials file approach is used
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("TESTDOMAIN")),
+                It.Is<IEnumerable<string>>(args => args.Contains("-A")),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -365,15 +369,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
 
-            string capturedArgs = "";
-            mockProcess
-                .Setup(x => x.ExecuteAsync(
-                    "smbclient",
-                    It.IsAny<string>(),
-                    It.IsAny<IDictionary<string, string>>(),
-                    It.IsAny<CancellationToken>()))
-                .Callback<string, string, IDictionary<string, string>?, CancellationToken>((_, args, _, _) => capturedArgs = args)
-                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = "" });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
 
@@ -384,7 +380,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             // Verify the command was executed (escaping is internal, we just verify it doesn't throw)
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.IsAny<string>(),
+                It.IsAny<IEnumerable<string>>(),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -396,13 +392,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync(
-                    "smbclient",
-                    It.Is<string>(args => args.Contains("-c \"ls\"")),
-                    It.IsAny<IDictionary<string, string>>(),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = "" });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
 
@@ -412,7 +402,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             // Assert
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("-c \"ls\"") && !args.Contains("/*")),
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("ls")) && !args.Any(a => a.Contains("/*"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -424,13 +414,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync(
-                    "smbclient",
-                    It.Is<string>(args => args.Contains("subfolder/*")),
-                    It.IsAny<IDictionary<string, string>>(),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = "" });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
 
@@ -440,7 +424,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             // Assert
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("subfolder/*")),
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("subfolder/*"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -462,7 +446,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             // Second call writes the file
             int callCount = 0;
             mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<IEnumerable<string>>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(() =>
                 {
                     callCount++;
@@ -473,6 +457,11 @@ namespace SmbSharp.Tests.Business.SmbClient
                     // Second call - write file
                     return new ProcessResult { ExitCode = 0, StandardOutput = "" };
                 });
+
+            // Setup chmod command
+            mockProcess
+                .Setup(x => x.ExecuteAsync("chmod", It.IsAny<IEnumerable<string>>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "", StandardError = "" });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
             using var stream = new MemoryStream(new byte[] { 1, 2, 3 });
@@ -493,9 +482,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockProcess = new Mock<IProcessWrapper>();
 
             // File existence check succeeds (file exists)
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "file exists" });
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = "file exists" });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
             using var stream = new MemoryStream(new byte[] { 1, 2, 3 });
@@ -512,9 +499,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = "" });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
             using var stream = new MemoryStream(Encoding.UTF8.GetBytes("test content"));
@@ -527,7 +512,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             // Verify only put command was executed (not get for append, not ls for CreateNew)
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("put") && !args.Contains("get") && !args.Contains("ls")),
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("put")) && !args.Any(a => a.Contains("get")) && !args.Any(a => a.Contains("ls"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -543,22 +528,31 @@ namespace SmbSharp.Tests.Business.SmbClient
 
             // Setup mock to handle both get (for existing file) and put (for upload)
             mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.Is<string>(args => args.Contains("get")), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync((string cmd, string args, IDictionary<string, string>? env, CancellationToken ct) =>
+                .Setup(x => x.ExecuteAsync("smbclient", It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("get"))), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((string cmd, IEnumerable<string> argList, IDictionary<string, string>? env, CancellationToken ct) =>
                 {
                     // Extract the temp file path from the get command and create it with existing content
-                    var match = System.Text.RegularExpressions.Regex.Match(args, @"\""([C-Z]:[^\""]+_existing_[^\""]+)\""");
-                    if (match.Success)
+                    var commandArg = argList.LastOrDefault();
+                    if (commandArg != null)
                     {
-                        var tempPath = match.Groups[1].Value.Replace("\\\\", "\\").TrimEnd('\\');
-                        File.WriteAllText(tempPath, existingContent);
+                        var match = System.Text.RegularExpressions.Regex.Match(commandArg, @"""([C-Z]:[^""]+_existing_[^""]+)""");
+                        if (match.Success)
+                        {
+                            var tempPath = match.Groups[1].Value.Replace("\\\\", "\\").TrimEnd('\\');
+                            File.WriteAllText(tempPath, existingContent);
+                        }
                     }
                     return new ProcessResult { ExitCode = 0, StandardOutput = "" };
                 });
 
             mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.Is<string>(args => args.Contains("put")), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .Setup(x => x.ExecuteAsync("smbclient", It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("put"))), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });
+
+            // Setup chmod command
+            mockProcess
+                .Setup(x => x.ExecuteAsync("chmod", It.IsAny<IEnumerable<string>>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "", StandardError = "" });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
             using var stream = new MemoryStream(Encoding.UTF8.GetBytes("new content"));
@@ -571,13 +565,13 @@ namespace SmbSharp.Tests.Business.SmbClient
             // Verify get command was executed (to download existing file)
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("get")),
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("get"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
             // Verify put command was executed (to upload combined file)
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("put")),
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("put"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -591,7 +585,7 @@ namespace SmbSharp.Tests.Business.SmbClient
 
             // Setup mock to return FileNotFound for get (file doesn't exist)
             mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.Is<string>(args => args.Contains("get")), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .Setup(x => x.ExecuteAsync("smbclient", It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("get"))), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new ProcessResult
                 {
                     ExitCode = 1,
@@ -601,7 +595,7 @@ namespace SmbSharp.Tests.Business.SmbClient
 
             // Setup mock to succeed for put
             mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.Is<string>(args => args.Contains("put")), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .Setup(x => x.ExecuteAsync("smbclient", It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("put"))), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
@@ -615,13 +609,13 @@ namespace SmbSharp.Tests.Business.SmbClient
             // Verify get was attempted
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("get")),
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("get"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
             // Verify put command was still executed
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("put")),
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("put"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -633,9 +627,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = "" });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
             using var stream = new MemoryStream(Encoding.UTF8.GetBytes("test content"));
@@ -648,7 +640,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             // Verify only put command was executed
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("put") && !args.Contains("get") && !args.Contains("ls")),
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("put")) && !args.Any(a => a.Contains("get")) && !args.Any(a => a.Contains("ls"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -669,7 +661,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             mockProcess
                 .Setup(x => x.ExecuteAsync(
                     "smbclient",
-                    It.Is<string>(args => args.Contains("del")),
+                    It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("del"))),
                     It.IsAny<IDictionary<string, string>>(),
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });
@@ -683,7 +675,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             Assert.True(result);
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("del") && args.Contains("file.txt")),
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("del")) && args.Any(a => a.Contains("file.txt"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -705,7 +697,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             mockProcess
                 .Setup(x => x.ExecuteAsync(
                     "smbclient",
-                    It.Is<string>(args => args.Contains("ls") && args.Contains("newdir")),
+                    It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("ls")) && args.Any(a => a.Contains("newdir"))),
                     It.IsAny<IDictionary<string, string>>(),
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new ProcessResult { ExitCode = 1, StandardError = "NT_STATUS_OBJECT_NAME_NOT_FOUND" });
@@ -714,7 +706,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             mockProcess
                 .Setup(x => x.ExecuteAsync(
                     "smbclient",
-                    It.Is<string>(args => args.Contains("mkdir")),
+                    It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("mkdir"))),
                     It.IsAny<IDictionary<string, string>>(),
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });
@@ -728,12 +720,12 @@ namespace SmbSharp.Tests.Business.SmbClient
             Assert.True(result);
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("ls") && args.Contains("newdir")),
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("ls")) && args.Any(a => a.Contains("newdir"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("mkdir") && args.Contains("newdir")),
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("mkdir")) && args.Any(a => a.Contains("newdir"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -749,7 +741,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             mockProcess
                 .Setup(x => x.ExecuteAsync(
                     "smbclient",
-                    It.Is<string>(args => args.Contains("ls") && args.Contains("existingdir")),
+                    It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("ls")) && args.Any(a => a.Contains("existingdir"))),
                     It.IsAny<IDictionary<string, string>>(),
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "directory listing" });
@@ -764,13 +756,13 @@ namespace SmbSharp.Tests.Business.SmbClient
             // Verify ls was called
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("ls") && args.Contains("existingdir")),
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("ls")) && args.Any(a => a.Contains("existingdir"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
             // Verify mkdir was NOT called (directory already exists)
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("mkdir")),
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("mkdir"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Never);
         }
@@ -801,9 +793,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = "" });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
 
@@ -821,9 +811,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
 
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult { ExitCode = 1, StandardError = "Connection failed" });
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 1, StandardError = "Connection failed" });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
 
@@ -860,12 +848,13 @@ namespace SmbSharp.Tests.Business.SmbClient
             // Arrange
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
-            string? capturedArguments = null;
+            var capturedArguments = new List<string>();
 
+            // Setup for IEnumerable<string> arguments (new credentials file approach)
             mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" })
-                .Callback<string, string, IDictionary<string, string>?, CancellationToken>((cmd, args, env, ct) => capturedArguments = args);
+                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<IEnumerable<string>>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .Callback<string, IEnumerable<string>, IDictionary<string, string>?, CancellationToken>((cmd, args, env, ct) => capturedArguments.AddRange(args))
+                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
 
@@ -874,10 +863,10 @@ namespace SmbSharp.Tests.Business.SmbClient
 
             // Assert
             Assert.True(result);
-            Assert.NotNull(capturedArguments);
-            // Command string gets escaped, so quotes become \"
-            Assert.Contains(@"cd \""path/to/directory\""", capturedArguments);
-            Assert.Contains("ls", capturedArguments);
+            Assert.NotEmpty(capturedArguments);
+            // The command is now passed as a separate argument
+            Assert.Contains(capturedArguments, arg => arg.Contains("cd \"path/to/directory\""));
+            Assert.Contains(capturedArguments, arg => arg.Contains("ls"));
         }
 
         [Fact]
@@ -886,12 +875,13 @@ namespace SmbSharp.Tests.Business.SmbClient
             // Arrange
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
-            string? capturedArguments = null;
+            var capturedArguments = new List<string>();
 
+            // Setup for IEnumerable<string> arguments (new credentials file approach)
             mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" })
-                .Callback<string, string, IDictionary<string, string>?, CancellationToken>((cmd, args, env, ct) => capturedArguments = args);
+                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<IEnumerable<string>>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .Callback<string, IEnumerable<string>, IDictionary<string, string>?, CancellationToken>((cmd, args, env, ct) => capturedArguments.AddRange(args))
+                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
 
@@ -900,10 +890,10 @@ namespace SmbSharp.Tests.Business.SmbClient
 
             // Assert
             Assert.True(result);
-            Assert.NotNull(capturedArguments);
-            // Path should be converted to forward slashes for smbclient, and command string gets escaped
-            Assert.Contains(@"cd \""path/to/directory\""", capturedArguments);
-            Assert.Contains("ls", capturedArguments);
+            Assert.NotEmpty(capturedArguments);
+            // Path should be converted to forward slashes for smbclient
+            Assert.Contains(capturedArguments, arg => arg.Contains("cd \"path/to/directory\""));
+            Assert.Contains(capturedArguments, arg => arg.Contains("ls"));
         }
     }
 

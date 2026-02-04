@@ -22,13 +22,14 @@ namespace SmbSharp.Business
         /// Creates a new FileHandler using Kerberos authentication.
         /// On Linux, requires a valid Kerberos ticket (kinit).
         /// </summary>
+        /// <param name="loggerFactory">Optional logger factory for debug output. Pass null to disable logging.</param>
         /// <returns>A new FileHandler instance</returns>
         /// <exception cref="PlatformNotSupportedException">Thrown when running on unsupported platform</exception>
         /// <exception cref="InvalidOperationException">Thrown when smbclient is not available on Linux</exception>
-        public static FileHandler Create()
+        public static FileHandler CreateWithKerberos(ILoggerFactory? loggerFactory = null)
         {
-            var loggerFactory = new NullLoggerFactory();
-            var processWrapper = new ProcessWrapper();
+            loggerFactory ??= new NullLoggerFactory();
+            var processWrapper = new ProcessWrapper(loggerFactory.CreateLogger<ProcessWrapper>());
             var smbClientHandler = new SmbClientFileHandler(
                 loggerFactory.CreateLogger<SmbClientFileHandler>(),
                 processWrapper,
@@ -43,19 +44,20 @@ namespace SmbSharp.Business
         /// <param name="username">Username for authentication</param>
         /// <param name="password">Password for authentication</param>
         /// <param name="domain">Optional domain for authentication</param>
+        /// <param name="loggerFactory">Optional logger factory for debug output. Pass null to disable logging.</param>
         /// <returns>A new FileHandler instance</returns>
         /// <exception cref="ArgumentException">Thrown when username or password is null or empty</exception>
         /// <exception cref="PlatformNotSupportedException">Thrown when running on unsupported platform</exception>
         /// <exception cref="InvalidOperationException">Thrown when smbclient is not available on Linux</exception>
-        public static FileHandler Create(string username, string password, string? domain = null)
+        public static FileHandler CreateWithCredentials(string username, string password, string? domain = null, ILoggerFactory? loggerFactory = null)
         {
             if (string.IsNullOrWhiteSpace(username))
                 throw new ArgumentException("Username cannot be null or empty", nameof(username));
             if (string.IsNullOrWhiteSpace(password))
                 throw new ArgumentException("Password cannot be null or empty", nameof(password));
 
-            var loggerFactory = new NullLoggerFactory();
-            var processWrapper = new ProcessWrapper();
+            loggerFactory ??= new NullLoggerFactory();
+            var processWrapper = new ProcessWrapper(loggerFactory.CreateLogger<ProcessWrapper>());
             var smbClientHandler = new SmbClientFileHandler(
                 loggerFactory.CreateLogger<SmbClientFileHandler>(),
                 processWrapper,

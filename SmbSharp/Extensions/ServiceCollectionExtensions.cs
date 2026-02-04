@@ -138,16 +138,14 @@ namespace SmbSharp.Extensions
                 {
                     return new SmbClientFileHandler(logger, processWrapper, true);
                 }
-                else
-                {
-                    if (string.IsNullOrEmpty(options.Username) || string.IsNullOrEmpty(options.Password))
-                    {
-                        throw new ArgumentException(
-                            "Username and password are required when not using Kerberos authentication");
-                    }
 
-                    return new SmbClientFileHandler(logger, processWrapper, false, options.Username, options.Password, options.Domain);
+                if (string.IsNullOrEmpty(options.Username) || string.IsNullOrEmpty(options.Password))
+                {
+                    throw new ArgumentException(
+                        "Username and password are required when not using Kerberos authentication");
                 }
+
+                return new SmbClientFileHandler(logger, processWrapper, false, options.Username, options.Password, options.Domain);
             });
 
             services.AddScoped<IFileHandler, FileHandler>();

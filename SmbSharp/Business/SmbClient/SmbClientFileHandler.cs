@@ -1,5 +1,4 @@
-﻿using System.Diagnostics;
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using SmbSharp.Business.Interfaces;
 using SmbSharp.Enums;
@@ -24,7 +23,7 @@ namespace SmbSharp.Business.SmbClient
         // Cache for smbclient availability check
         private static bool? _smbClientAvailable;
         private static readonly object _smbClientCheckLock = new();
-        
+
         public bool IsSmbClientAvailable()
         {
             // Use cached result if available
@@ -52,17 +51,19 @@ namespace SmbSharp.Business.SmbClient
                 }
             }
         }
-        
-        public SmbClientFileHandler(ILogger<SmbClientFileHandler> logger, IProcessWrapper processWrapper, bool useKerberos, string? username = null, string? password = null,
+
+        public SmbClientFileHandler(ILogger<SmbClientFileHandler> logger, IProcessWrapper processWrapper,
+            bool useKerberos, string? username = null, string? password = null,
             string? domain = null)
         {
             _logger = logger;
             _processWrapper = processWrapper ?? throw new ArgumentNullException(nameof(processWrapper));
             _useKerberos = useKerberos;
-            if(!useKerberos && (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password)))
+            if (!useKerberos && (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password)))
             {
                 _logger.LogError("Username and Password must be provided when not using Kerberos authentication.");
-                throw new ArgumentException("Username and Password must be provided when not using Kerberos authentication.");
+                throw new ArgumentException(
+                    "Username and Password must be provided when not using Kerberos authentication.");
             }
 
             _username = username;
@@ -84,7 +85,7 @@ namespace SmbSharp.Business.SmbClient
 
                 // Parse smbclient output - format is typically:
                 // filename    A    size  date
-                
+
                 var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
                 foreach (var line in lines)
                 {
@@ -305,119 +306,110 @@ namespace SmbSharp.Business.SmbClient
         private async Task<string> ExecuteSmbClientCommandAsync(string server, string share, string command,
             string contextPath, CancellationToken cancellationToken = default)
         {
-            // Note: No shell escaping needed since UseShellExecute=false in ProcessWrapper
-            // ProcessStartInfo passes arguments directly to the process without shell interpretation
-            // However, we still need to escape quotes within the smbclient -c command parameter
-            var escapedCommand = command.Replace("\\", "\\\\").Replace("\"", "\\\"");
+            string? credentialsFile = null;
 
-            string arguments;
-            Dictionary<string, string>? environmentVariables = null;
-
-            if (_useKerberos)
+            try
             {
-                // Use Kerberos authentication (kinit ticket). Modern smbclient versions use --use-kerberos
-                // NOTE: Quotes around command are needed for smbclient to parse the -c parameter correctly
-                arguments =
-                    $"//{server}/{share} --use-kerberos=required -c \"{escapedCommand}\"";
-            }
-            else
-            {
-                // Use username/password authentication
-                var userArg = string.IsNullOrEmpty(_domain)
-                    ? _username ?? string.Empty
-                    : $"{_domain}\\{_username}";
-
-                // SECURITY: Pass password via environment variable instead of command line
-                // This prevents password from being visible in process listings
-                // Explicitly disable Kerberos to force NTLM authentication (important for IP-based connections)
-                // NOTE: No quotes around userArg - ProcessStartInfo.Arguments parser on Linux doubles backslashes inside quotes
-                arguments =
-                    $"//{server}/{share} --use-kerberos=disabled -U {userArg} -c \"{escapedCommand}\"";
-                environmentVariables = new Dictionary<string, string>
+                var argumentList = new List<string>
                 {
-                    ["PASSWD"] = _password ?? string.Empty
+                    // Add server/share
+                    $"//{server}/{share}"
                 };
-            }
 
-            // Log the exact command for debugging
-            _logger.LogDebug("Executing smbclient with arguments: {Arguments}", arguments);
-            if (environmentVariables != null && environmentVariables.ContainsKey("PASSWD"))
+                if (_useKerberos)
+                {
+                    // Use Kerberos authentication (kinit ticket)
+                    argumentList.Add("--use-kerberos=required");
+                }
+                else
+                {
+                    // Use username/password authentication via credentials file
+                    var username = string.IsNullOrEmpty(_domain)
+                        ? _username ?? string.Empty
+                        : $"{_domain}\\{_username}";
+
+                    // Create temporary credentials file
+                    credentialsFile = Path.Combine(Path.GetTempPath(), $"smb_{Guid.NewGuid():N}.creds");
+                    await File.WriteAllTextAsync(credentialsFile,
+                        $"username={username}\npassword={_password}\n",
+                        cancellationToken);
+
+                    try
+                    {
+                        var chmodArgs = new List<string> { "600", credentialsFile };
+                        await _processWrapper.ExecuteAsync("chmod", chmodArgs, null, cancellationToken);
+                    }
+                    catch (Exception e)
+                    {
+                        _logger.LogWarning(e, "Failed to set permissions on SMB credentials file.");
+                    }
+
+                    // Use credentials file
+                    argumentList.Add("-A");
+                    argumentList.Add(credentialsFile);
+                }
+
+                // Add command
+                argumentList.Add("-c");
+                argumentList.Add(command);
+
+                var result = await _processWrapper.ExecuteAsync("smbclient", argumentList, null, cancellationToken);
+
+                if (result.ExitCode == 0)
+                {
+                    return result.StandardOutput;
+                }
+
+                // Try to differentiate error types based on smbclient error messages
+                var errorLower = result.StandardError.ToLowerInvariant();
+
+                if (errorLower.Contains("does not exist") ||
+                    errorLower.Contains("not found") ||
+                    errorLower.Contains("nt_status_object_name_not_found"))
+                {
+                    throw new FileNotFoundException(
+                        $"The specified path was not found on {contextPath}", contextPath);
+                }
+
+                if (errorLower.Contains("access denied") ||
+                    errorLower.Contains("permission denied") ||
+                    errorLower.Contains("nt_status_access_denied") ||
+                    errorLower.Contains("logon failure"))
+                {
+                    throw new UnauthorizedAccessException(
+                        $"Access denied to {contextPath}: {result.StandardError}");
+                }
+
+                if (errorLower.Contains("bad network path") ||
+                    errorLower.Contains("network name not found") ||
+                    errorLower.Contains("nt_status_bad_network_name"))
+                {
+                    throw new DirectoryNotFoundException(
+                        $"The network path was not found: {contextPath}");
+                }
+
+                // Generic error for everything else
+                throw new IOException(
+                    $"Failed to execute smbclient command on {contextPath}: {result.StandardError}");
+            }
+            finally
             {
-                _logger.LogDebug("PASSWD environment variable is set (value hidden)");
+                // Clean up credentials file
+                if (credentialsFile != null)
+                {
+                    try
+                    {
+                        File.Delete(credentialsFile);
+                    }
+                    catch
+                    {
+                        // Ignore cleanup errors
+                    }
+                }
             }
-
-            var result = await _processWrapper.ExecuteAsync("smbclient", arguments, environmentVariables, cancellationToken);
-
-            if (result.ExitCode == 0)
-            {
-                return result.StandardOutput;
-            }
-
-            // Try to differentiate error types based on smbclient error messages
-            var errorLower = (result.StandardError ?? string.Empty).ToLowerInvariant();
-
-            if (errorLower.Contains("does not exist") ||
-                errorLower.Contains("not found") ||
-                errorLower.Contains("nt_status_object_name_not_found"))
-            {
-                throw new FileNotFoundException(
-                    $"The specified path was not found on {contextPath}", contextPath);
-            }
-
-            if (errorLower.Contains("access denied") ||
-                errorLower.Contains("permission denied") ||
-                errorLower.Contains("nt_status_access_denied") ||
-                errorLower.Contains("logon failure"))
-            {
-                throw new UnauthorizedAccessException(
-                    $"Access denied to {contextPath}: {result.StandardError}");
-            }
-
-            if (errorLower.Contains("bad network path") ||
-                errorLower.Contains("network name not found") ||
-                errorLower.Contains("nt_status_bad_network_name"))
-            {
-                throw new DirectoryNotFoundException(
-                    $"The network path was not found: {contextPath}");
-            }
-
-            // Generic error for everything else
-            throw new IOException(
-                $"Failed to execute smbclient command on {contextPath}: {result.StandardError}");
         }
 
-        /// <summary>
-        /// Escapes a string for safe use as a shell argument by removing/escaping dangerous characters.
-        /// </summary>
-        private string EscapeShellArgument(string argument)
-        {
-            if (string.IsNullOrEmpty(argument))
-                return argument;
-
-            // Remove or escape characters that could cause command injection
-            // For smbclient paths, we need to be careful with quotes, backticks, dollar signs, etc.
-            return argument
-                .Replace("\\", "\\\\") // Escape backslashes first
-                .Replace("\"", "\\\"") // Escape double quotes
-                .Replace("`", "\\`") // Escape backticks
-                .Replace("$", "\\$"); // Escape dollar signs
-        }
-
-        /// <summary>
-        /// Escapes a string for safe use inside smbclient -c command string.
-        /// </summary>
-        private string EscapeCommandString(string command)
-        {
-            if (string.IsNullOrEmpty(command))
-                return command;
-
-            // Escape quotes and backslashes in the command string
-            return command
-                .Replace("\\", "\\\\")
-                .Replace("\"", "\\\"");
-        }
-
-        private (string server, string share, string path) ParseSmbPath(string smbPath)
+        private static (string server, string share, string path) ParseSmbPath(string smbPath)
         {
             // Parse SMB path: //server/share/path or \\server\share\path
             var match = SmbPathRegexInstance.Match(smbPath);

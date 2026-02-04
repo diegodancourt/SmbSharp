@@ -123,16 +123,31 @@ builder.Services.AddSmbSharp(options =>
 ### Direct Instantiation (Without Dependency Injection)
 
 ```csharp
+using Microsoft.Extensions.Logging;
 using SmbSharp.Business;
 
-// Kerberos authentication
-var handler = FileHandler.Create();
+// Without logging
+var handler = FileHandler.CreateWithKerberos();
+var handler = FileHandler.CreateWithCredentials("username", "password", "DOMAIN");
 
-// Username/password authentication
-var handler = FileHandler.Create("username", "password", "DOMAIN");
+// With console logging (for debugging)
+using var loggerFactory = LoggerFactory.Create(builder =>
+{
+    builder
+        .SetMinimumLevel(LogLevel.Debug)
+        .AddConsole();
+});
+
+var handler = FileHandler.CreateWithKerberos(loggerFactory);
+var handler = FileHandler.CreateWithCredentials("username", "password", "DOMAIN", loggerFactory);
 
 // Usage
 var files = await handler.EnumerateFilesAsync("//server/share/folder");
+```
+
+**Note:** To use console logging, you need to add the `Microsoft.Extensions.Logging.Console` package:
+```bash
+dotnet add package Microsoft.Extensions.Logging.Console
 ```
 
 ## Path Format

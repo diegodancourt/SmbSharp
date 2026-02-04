@@ -16,6 +16,18 @@ namespace SmbSharp.Infrastructure.Interfaces
         Task<ProcessResult> ExecuteAsync(string fileName, string arguments,
             IDictionary<string, string>? environmentVariables = null,
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Executes a process with the given configuration using argument list.
+        /// </summary>
+        /// <param name="fileName">The application or document to start</param>
+        /// <param name="argumentList">List of command-line arguments (avoids parsing issues)</param>
+        /// <param name="environmentVariables">Environment variables to set for the process</param>
+        /// <param name="cancellationToken">Token to cancel the operation</param>
+        /// <returns>A tuple containing the exit code, standard output, and standard error</returns>
+        Task<ProcessResult> ExecuteAsync(string fileName, IEnumerable<string> argumentList,
+            IDictionary<string, string>? environmentVariables = null,
+            CancellationToken cancellationToken = default);
     }
 
     /// <summary>

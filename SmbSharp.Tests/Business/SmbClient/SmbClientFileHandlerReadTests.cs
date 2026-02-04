@@ -16,27 +16,34 @@ namespace SmbSharp.Tests.Business.SmbClient
         /// </summary>
         private void SetupSuccessfulDownload(Mock<IProcessWrapper> mockProcess, int exitCode = 0, string output = "", string error = "")
         {
+            // Setup for IEnumerable<string> overload (new approach)
             mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .Callback<string, string, IDictionary<string, string>?, CancellationToken>((cmd, args, env, ct) =>
+                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<IEnumerable<string>>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .Callback<string, IEnumerable<string>, IDictionary<string, string>?, CancellationToken>((cmd, argList, env, ct) =>
                 {
                     if (exitCode == 0)
                     {
-                        // Args format: //server/share --use-kerberos=required -c "get \"test.txt\" \"C:\\Users\\...\""
-                        // The file path is between escaped quotes: \"path\"
-                        // Match pattern: \"C:\path\" or \"/tmp/path\" - capture until the closing \"
-                        var match = System.Text.RegularExpressions.Regex.Match(args, @"\""([C-Z]:[^\""]+|/tmp/[^\""]+)\""");
-                        if (match.Success)
+                        // Find the temp file path in the argument list
+                        // Format: ["//server/share", "--use-kerberos=required", "-c", "get \"test.txt\" \"C:\\temp\\...\"]
+                        var commandArg = argList.LastOrDefault();
+                        if (commandArg != null)
                         {
-                            var tempPath = match.Groups[1].Value;
-                            // Unescape any double backslashes and remove trailing backslash
-                            tempPath = tempPath.Replace("\\\\", "\\").TrimEnd('\\');
-                            // Create the temp file that smbclient would create
-                            File.WriteAllText(tempPath, "test content");
+                            var match = System.Text.RegularExpressions.Regex.Match(commandArg, @"""([C-Z]:[^""]+|/tmp/[^""]+)""");
+                            if (match.Success)
+                            {
+                                var tempPath = match.Groups[1].Value;
+                                tempPath = tempPath.Replace("\\\\", "\\").TrimEnd('\\');
+                                File.WriteAllText(tempPath, "test content");
+                            }
                         }
                     }
                 })
                 .ReturnsAsync(new ProcessResult { ExitCode = exitCode, StandardOutput = output, StandardError = error });
+
+            // Setup chmod command
+            mockProcess
+                .Setup(x => x.ExecuteAsync("chmod", It.IsAny<IEnumerable<string>>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "", StandardError = "" });
         }
 
         [Fact]
@@ -62,10 +69,10 @@ namespace SmbSharp.Tests.Business.SmbClient
             // Verify the correct command was executed
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args =>
+                It.Is<IEnumerable<string>>(args =>
                     args.Contains("//server/share") &&
-                    args.Contains("get") &&
-                    args.Contains("path/test.txt")),
+                    args.Any(a => a.Contains("get")) &&
+                    args.Any(a => a.Contains("path/test.txt"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -87,11 +94,11 @@ namespace SmbSharp.Tests.Business.SmbClient
             Assert.NotNull(stream);
             stream.Dispose();
 
-            // Verify get command uses just filename (no path prefix) with escaped quotes
+            // Verify get command uses just filename (no path prefix)
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args =>
-                    args.Contains("get \\\"test.txt\\\"")),
+                It.Is<IEnumerable<string>>(args =>
+                    args.Any(a => a.Contains("get") && a.Contains("test.txt"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -104,9 +111,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockProcess = new Mock<IProcessWrapper>();
 
             // Mock smbclient returning "not found" error
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult
+            mockProcess.SetupSmbClient(new ProcessResult
                 {
                     ExitCode = 1,
                     StandardError = "NT_STATUS_OBJECT_NAME_NOT_FOUND",
@@ -130,9 +135,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockProcess = new Mock<IProcessWrapper>();
 
             // Mock smbclient returning "access denied" error
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult
+            mockProcess.SetupSmbClient(new ProcessResult
                 {
                     ExitCode = 1,
                     StandardError = "NT_STATUS_ACCESS_DENIED",
@@ -157,9 +160,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockProcess = new Mock<IProcessWrapper>();
 
             // Mock smbclient returning "bad network path" error
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult
+            mockProcess.SetupSmbClient(new ProcessResult
                 {
                     ExitCode = 1,
                     StandardError = "NT_STATUS_BAD_NETWORK_NAME",
@@ -192,7 +193,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             // Assert - Verify kerberos flag is used
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("-k")),
+                It.Is<IEnumerable<string>>(args => args.Contains("--use-kerberos=required")),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -212,11 +213,11 @@ namespace SmbSharp.Tests.Business.SmbClient
             var stream = await handler.GetFileStreamAsync("//server/share", "file.txt");
             stream.Dispose();
 
-            // Assert - Verify username is passed and password via environment variable
+            // Assert - Verify credentials file approach is used (using -A flag)
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("-U") && args.Contains("testuser")),
-                It.Is<IDictionary<string, string>>(env => env.ContainsKey("PASSWD") && env["PASSWD"] == "testpass"),
+                It.Is<IEnumerable<string>>(args => args.Contains("-A")),
+                It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
 
@@ -235,10 +236,10 @@ namespace SmbSharp.Tests.Business.SmbClient
             var stream = await handler.GetFileStreamAsync("//server/share", "file.txt");
             stream.Dispose();
 
-            // Assert - Verify domain is included in username
+            // Assert - Verify credentials file approach is used (domain is included in credentials file)
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("TESTDOMAIN\\testuser")),
+                It.Is<IEnumerable<string>>(args => args.Contains("-A")),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -271,10 +272,10 @@ namespace SmbSharp.Tests.Business.SmbClient
             var stream = await handler.GetFileStreamAsync("//server/share", "file with spaces.txt");
             stream.Dispose();
 
-            // Assert - Verify filename is quoted with escaped quotes
+            // Assert - Verify filename is in the command
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("get \\\"file with spaces.txt\\\"")),
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("get") && a.Contains("file with spaces.txt"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -290,7 +291,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             cts.Cancel();
 
             mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<IEnumerable<string>>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new OperationCanceledException());
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, useKerberos: true);
@@ -308,9 +309,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             var mockProcess = new Mock<IProcessWrapper>();
 
             // Mock smbclient returning a generic error
-            mockProcess
-                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<string>(), It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new ProcessResult
+            mockProcess.SetupSmbClient(new ProcessResult
                 {
                     ExitCode = 1,
                     StandardError = "Some unexpected error occurred",
@@ -343,7 +342,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             // Assert - Verify path uses forward slashes in get command
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("path/to/file.txt")),
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("path/to/file.txt"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -365,7 +364,7 @@ namespace SmbSharp.Tests.Business.SmbClient
             // Assert
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<string>(args => args.Contains("level1/level2/level3/file.txt")),
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("level1/level2/level3/file.txt"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
