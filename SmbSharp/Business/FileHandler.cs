@@ -1,8 +1,11 @@
 ﻿using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SmbSharp.Business.Interfaces;
+using SmbSharp.Business.SmbClient;
 using SmbSharp.Enums;
+using SmbSharp.Infrastructure;
 
 namespace SmbSharp.Business
 {
@@ -16,7 +19,57 @@ namespace SmbSharp.Business
         private readonly ISmbClientFileHandler _smbClientFileHandler;
 
         /// <summary>
+        /// Creates a new FileHandler using Kerberos authentication.
+        /// On Linux, requires a valid Kerberos ticket (kinit).
+        /// </summary>
+        /// <returns>A new FileHandler instance</returns>
+        /// <exception cref="PlatformNotSupportedException">Thrown when running on unsupported platform</exception>
+        /// <exception cref="InvalidOperationException">Thrown when smbclient is not available on Linux</exception>
+        public static FileHandler Create()
+        {
+            var loggerFactory = new NullLoggerFactory();
+            var processWrapper = new ProcessWrapper();
+            var smbClientHandler = new SmbClientFileHandler(
+                loggerFactory.CreateLogger<SmbClientFileHandler>(),
+                processWrapper,
+                useKerberos: true);
+
+            return new FileHandler(loggerFactory.CreateLogger<FileHandler>(), smbClientHandler);
+        }
+
+        /// <summary>
+        /// Creates a new FileHandler using username/password authentication.
+        /// </summary>
+        /// <param name="username">Username for authentication</param>
+        /// <param name="password">Password for authentication</param>
+        /// <param name="domain">Optional domain for authentication</param>
+        /// <returns>A new FileHandler instance</returns>
+        /// <exception cref="ArgumentException">Thrown when username or password is null or empty</exception>
+        /// <exception cref="PlatformNotSupportedException">Thrown when running on unsupported platform</exception>
+        /// <exception cref="InvalidOperationException">Thrown when smbclient is not available on Linux</exception>
+        public static FileHandler Create(string username, string password, string? domain = null)
+        {
+            if (string.IsNullOrWhiteSpace(username))
+                throw new ArgumentException("Username cannot be null or empty", nameof(username));
+            if (string.IsNullOrWhiteSpace(password))
+                throw new ArgumentException("Password cannot be null or empty", nameof(password));
+
+            var loggerFactory = new NullLoggerFactory();
+            var processWrapper = new ProcessWrapper();
+            var smbClientHandler = new SmbClientFileHandler(
+                loggerFactory.CreateLogger<SmbClientFileHandler>(),
+                processWrapper,
+                useKerberos: false,
+                username,
+                password,
+                domain);
+
+            return new FileHandler(loggerFactory.CreateLogger<FileHandler>(), smbClientHandler);
+        }
+
+        /// <summary>
         /// Initializes a new instance of FileHandler with Kerberos authentication (requires kinit ticket).
+        /// This constructor is used by dependency injection.
         /// </summary>
         /// <exception cref="PlatformNotSupportedException">Thrown when running on unsupported platform (not Windows or Linux)</exception>
         /// <exception cref="InvalidOperationException">Thrown when smbclient is not available on Linux</exception>

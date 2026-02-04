@@ -120,14 +120,19 @@ builder.Services.AddSmbSharp(options =>
 });
 ```
 
-### Direct Instantiation
+### Direct Instantiation (Without Dependency Injection)
 
 ```csharp
+using SmbSharp.Business;
+
 // Kerberos authentication
-var handler = new FileHandler();
+var handler = FileHandler.Create();
 
 // Username/password authentication
-var handler = new FileHandler("username", "password", "DOMAIN");
+var handler = FileHandler.Create("username", "password", "DOMAIN");
+
+// Usage
+var files = await handler.EnumerateFilesAsync("//server/share/folder");
 ```
 
 ## Path Format
