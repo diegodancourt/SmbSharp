@@ -361,11 +361,14 @@ namespace SmbSharp.Business.SmbClient
                 }
 
                 // Try to differentiate error types based on smbclient error messages
-                var errorLower = result.StandardError.ToLowerInvariant();
+                // Check both stdout and stderr as smbclient can output errors to either
+                var errorOutput = $"{result.StandardOutput} {result.StandardError}";
+                var errorLower = errorOutput.ToLowerInvariant();
 
                 if (errorLower.Contains("does not exist") ||
                     errorLower.Contains("not found") ||
-                    errorLower.Contains("nt_status_object_name_not_found"))
+                    errorLower.Contains("nt_status_object_name_not_found") ||
+                    errorLower.Contains("nt_status_no_such_file"))
                 {
                     throw new FileNotFoundException(
                         $"The specified path was not found on {contextPath}", contextPath);
