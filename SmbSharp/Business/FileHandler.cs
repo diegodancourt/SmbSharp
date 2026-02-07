@@ -11,45 +11,53 @@ namespace SmbSharp.Business
 {
     /// <summary>
     /// Implementation of IFileHandler that provides SMB/CIFS file operations across different platforms.
-    /// Uses native UNC paths on Windows and smbclient on Linux.
+    /// Uses native UNC paths on Windows (or smbclient via WSL if opted in) and smbclient on Linux/macOS.
     /// </summary>
     public class FileHandler : IFileHandler
     {
         private readonly ILogger<FileHandler> _logger;
         private readonly ISmbClientFileHandler _smbClientFileHandler;
+        private readonly bool _useSmbClient;
 
         /// <summary>
         /// Creates a new FileHandler using Kerberos authentication.
-        /// On Linux, requires a valid Kerberos ticket (kinit).
+        /// On Linux/macOS, requires a valid Kerberos ticket (kinit) and smbclient installed.
+        /// On Windows, uses native UNC paths by default. Set useWsl to true to use smbclient via WSL instead.
         /// </summary>
         /// <param name="loggerFactory">Optional logger factory for debug output. Pass null to disable logging.</param>
+        /// <param name="useWsl">When true on Windows, uses smbclient via WSL instead of native UNC paths. Ignored on Linux/macOS.</param>
         /// <returns>A new FileHandler instance</returns>
         /// <exception cref="PlatformNotSupportedException">Thrown when running on unsupported platform</exception>
-        /// <exception cref="InvalidOperationException">Thrown when smbclient is not available on Linux</exception>
-        public static FileHandler CreateWithKerberos(ILoggerFactory? loggerFactory = null)
+        /// <exception cref="InvalidOperationException">Thrown when smbclient is not available on Linux/macOS (or via WSL when useWsl is true)</exception>
+        public static FileHandler CreateWithKerberos(ILoggerFactory? loggerFactory = null, bool useWsl = false)
         {
             loggerFactory ??= new NullLoggerFactory();
             var processWrapper = new ProcessWrapper(loggerFactory.CreateLogger<ProcessWrapper>());
             var smbClientHandler = new SmbClientFileHandler(
                 loggerFactory.CreateLogger<SmbClientFileHandler>(),
                 processWrapper,
-                useKerberos: true);
+                useKerberos: true,
+                useWsl: useWsl);
 
-            return new FileHandler(loggerFactory.CreateLogger<FileHandler>(), smbClientHandler);
+            return new FileHandler(loggerFactory.CreateLogger<FileHandler>(), smbClientHandler, useWsl);
         }
 
         /// <summary>
         /// Creates a new FileHandler using username/password authentication.
+        /// On Linux/macOS, requires smbclient installed.
+        /// On Windows, uses native UNC paths by default. Set useWsl to true to use smbclient via WSL instead.
         /// </summary>
         /// <param name="username">Username for authentication</param>
         /// <param name="password">Password for authentication</param>
         /// <param name="domain">Optional domain for authentication</param>
         /// <param name="loggerFactory">Optional logger factory for debug output. Pass null to disable logging.</param>
+        /// <param name="useWsl">When true on Windows, uses smbclient via WSL instead of native UNC paths. Ignored on Linux/macOS.</param>
         /// <returns>A new FileHandler instance</returns>
         /// <exception cref="ArgumentException">Thrown when username or password is null or empty</exception>
         /// <exception cref="PlatformNotSupportedException">Thrown when running on unsupported platform</exception>
-        /// <exception cref="InvalidOperationException">Thrown when smbclient is not available on Linux</exception>
-        public static FileHandler CreateWithCredentials(string username, string password, string? domain = null, ILoggerFactory? loggerFactory = null)
+        /// <exception cref="InvalidOperationException">Thrown when smbclient is not available on Linux/macOS (or via WSL when useWsl is true)</exception>
+        public static FileHandler CreateWithCredentials(string username, string password, string? domain = null,
+            ILoggerFactory? loggerFactory = null, bool useWsl = false)
         {
             if (string.IsNullOrWhiteSpace(username))
                 throw new ArgumentException("Username cannot be null or empty", nameof(username));
@@ -64,46 +72,78 @@ namespace SmbSharp.Business
                 useKerberos: false,
                 username,
                 password,
-                domain);
+                domain,
+                useWsl: useWsl);
 
-            return new FileHandler(loggerFactory.CreateLogger<FileHandler>(), smbClientHandler);
+            return new FileHandler(loggerFactory.CreateLogger<FileHandler>(), smbClientHandler, useWsl);
         }
 
         /// <summary>
-        /// Initializes a new instance of FileHandler with Kerberos authentication (requires kinit ticket).
+        /// Initializes a new instance of FileHandler.
         /// This constructor is used by dependency injection.
+        /// On Windows, uses native UNC paths. On Linux/macOS, uses smbclient.
         /// </summary>
-        /// <exception cref="PlatformNotSupportedException">Thrown when running on unsupported platform (not Windows or Linux)</exception>
-        /// <exception cref="InvalidOperationException">Thrown when smbclient is not available on Linux</exception>
+        /// <exception cref="PlatformNotSupportedException">Thrown when running on unsupported platform</exception>
+        /// <exception cref="InvalidOperationException">Thrown when smbclient is not available on Linux/macOS</exception>
         public FileHandler(ILogger<FileHandler> logger, ISmbClientFileHandler smbClientFileHandler)
+            : this(logger, smbClientFileHandler, useWsl: false)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of FileHandler with optional WSL support.
+        /// On Windows with useWsl=false, uses native UNC paths.
+        /// On Windows with useWsl=true, uses smbclient via WSL.
+        /// On Linux/macOS, uses smbclient directly (useWsl is ignored).
+        /// </summary>
+        /// <param name="logger">Logger instance</param>
+        /// <param name="smbClientFileHandler">The smbclient file handler</param>
+        /// <param name="useWsl">When true on Windows, uses smbclient via WSL instead of native UNC paths</param>
+        /// <exception cref="PlatformNotSupportedException">Thrown when running on unsupported platform</exception>
+        /// <exception cref="InvalidOperationException">Thrown when smbclient is not available on Linux/macOS (or via WSL when useWsl is true)</exception>
+        public FileHandler(ILogger<FileHandler> logger, ISmbClientFileHandler smbClientFileHandler, bool useWsl)
         {
             _logger = logger;
             _smbClientFileHandler = smbClientFileHandler;
+
+            // On Linux/macOS, always use smbclient. On Windows, only if useWsl is opted in.
+            _useSmbClient = !RuntimeInformation.IsOSPlatform(OSPlatform.Windows) || useWsl;
+
             ValidatePlatformAndDependencies();
         }
 
         private void ValidatePlatformAndDependencies()
         {
-            // Check if running on supported platform (Windows or Linux)
+            // Check if running on supported platform (Windows, Linux, or macOS)
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows) &&
-                !RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                !RuntimeInformation.IsOSPlatform(OSPlatform.Linux) &&
+                !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
                 _logger.LogError("Unsupported platform: {Platform}", RuntimeInformation.OSDescription);
                 throw new PlatformNotSupportedException(
-                    "SmbSharp only supports Windows and Linux platforms. " +
+                    "SmbSharp only supports Windows, Linux, and macOS platforms. " +
                     $"Current platform: {RuntimeInformation.OSDescription}");
             }
 
-            // On non-Windows platforms, verify smbclient is available
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (_useSmbClient)
             {
+                // Verify smbclient is available
                 if (!_smbClientFileHandler.IsSmbClientAvailable())
                 {
+                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                    {
+                        _logger.LogError("smbclient is not available through WSL.");
+                        throw new InvalidOperationException(
+                            "smbclient is not available through WSL. " +
+                            "Ensure WSL is installed and smbclient is available inside your WSL distribution: " +
+                            "wsl apt-get install smbclient");
+                    }
+
                     _logger.LogError("smbclient is not installed or not available in PATH.");
                     throw new InvalidOperationException(
                         "smbclient is not installed or not available in PATH. " +
-                        "On Linux, install it using: apt-get install smbclient (Debian/Ubuntu) " +
-                        "or yum install samba-client (RHEL/CentOS)");
+                        "Install it using: apt-get install smbclient (Debian/Ubuntu), " +
+                        "yum install samba-client (RHEL/CentOS), or brew install samba (macOS)");
                 }
             }
         }
@@ -115,13 +155,13 @@ namespace SmbSharp.Business
             if (string.IsNullOrWhiteSpace(directory))
                 throw new ArgumentException("Directory path cannot be null or empty", nameof(directory));
 
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (_useSmbClient)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 return await _smbClientFileHandler.EnumerateFilesAsync(directory, cancellationToken);
             }
 
-            // On Windows, use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
+            // Use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
             return await Task.Run(IEnumerable<string> () =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -147,13 +187,13 @@ namespace SmbSharp.Business
             if (string.IsNullOrWhiteSpace(directory))
                 throw new ArgumentException("Directory path cannot be null or empty", nameof(directory));
 
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (_useSmbClient)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 return await _smbClientFileHandler.FileExistsAsync(fileName, directory, cancellationToken);
             }
 
-            // On Windows, use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
+            // Use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
             return await Task.Run(() =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -171,13 +211,13 @@ namespace SmbSharp.Business
             if (string.IsNullOrWhiteSpace(fileName))
                 throw new ArgumentException("File name cannot be null or empty", nameof(fileName));
 
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (_useSmbClient)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 return await _smbClientFileHandler.GetFileStreamAsync(directory, fileName, cancellationToken);
             }
 
-            // On Windows, safely combine paths - wrap in Task.Run to avoid blocking
+            // Use direct IO - safely combine paths - wrap in Task.Run to avoid blocking
             return await Task.Run(() =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -232,9 +272,9 @@ namespace SmbSharp.Business
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (!_useSmbClient)
             {
-                // On Windows, use direct IO operations for UNC paths
+                // Use direct IO operations for UNC paths
                 return await Task.Run(async () =>
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -273,13 +313,13 @@ namespace SmbSharp.Business
             if (string.IsNullOrWhiteSpace(directoryPath))
                 throw new ArgumentException("Directory path cannot be null or empty", nameof(directoryPath));
 
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (_useSmbClient)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 return await _smbClientFileHandler.CreateDirectoryAsync(directoryPath, cancellationToken);
             }
 
-            // On Windows, use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
+            // Use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
             return await Task.Run(() =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -303,7 +343,7 @@ namespace SmbSharp.Business
                 throw new ArgumentException("Destination file path cannot be null or empty",
                     nameof(destinationFilePath));
 
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (_useSmbClient)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -392,7 +432,7 @@ namespace SmbSharp.Business
                 }
             }
 
-            // On Windows, use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
+            // Use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
             return await Task.Run(() =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -409,9 +449,9 @@ namespace SmbSharp.Business
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (!_useSmbClient)
             {
-                // On Windows, use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
+                // Use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
                 return await Task.Run(() =>
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -441,12 +481,12 @@ namespace SmbSharp.Business
             if (string.IsNullOrWhiteSpace(directoryPath))
                 return false;
 
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (_useSmbClient)
             {
                 return await _smbClientFileHandler.CanConnectAsync(directoryPath, cancellationToken);
             }
 
-            // On Windows, use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
+            // Use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
             return await Task.Run(() => Directory.Exists(directoryPath), cancellationToken);
         }
     }

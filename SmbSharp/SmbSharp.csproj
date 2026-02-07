@@ -11,7 +11,7 @@
         <!-- NuGet Package Configuration -->
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <PackageId>SmbSharp</PackageId>
-        <Version>1.0.16</Version>
+        <Version>1.1.0</Version>
         <Authors>Diego Dancourt</Authors>
         <Company>Diego Dancourt</Company>
         <Product>SmbSharp</Product>
@@ -21,8 +21,8 @@
         <PackageProjectUrl>https://github.com/diegodancourt/SmbSharp</PackageProjectUrl>
         <RepositoryUrl>https://github.com/diegodancourt/SmbSharp</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
-        <PackageTags>smb;cifs;smbclient;file;share;network;kerberos;cross-platform</PackageTags>
-        <PackageReleaseNotes>v1.0.16: Make MoveFileAsync atomic on Linux with retry logic. If source deletion fails after copying, it retries once before rolling back the destination to maintain consistency. Updated documentation to reflect atomicity guarantee.</PackageReleaseNotes>
+        <PackageTags>smb;cifs;smbclient;file;share;network;kerberos;cross-platform;wsl;macos</PackageTags>
+        <PackageReleaseNotes>v1.1.0: Add macOS support (smbclient), WSL smbclient support on Windows (opt-in), and sample console app. macOS is treated like Linux when smbclient is available. On Windows, set UseWsl=true to use smbclient via WSL instead of native UNC paths. Includes interactive SmbSharp.Sample project for testing.</PackageReleaseNotes>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
     </PropertyGroup>

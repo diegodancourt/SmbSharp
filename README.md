@@ -1,13 +1,14 @@
 # SmbSharp
 
-A cross-platform .NET library for SMB/CIFS file operations. Works seamlessly on Windows using native UNC paths and on Linux using smbclient.
+A cross-platform .NET library for SMB/CIFS file operations. Works seamlessly on Windows using native UNC paths (or smbclient via WSL), and on Linux/macOS using smbclient.
 
 [![NuGet](https://img.shields.io/nuget/v/SmbSharp.svg)](https://www.nuget.org/packages/SmbSharp/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Features
 
-- ✅ **Cross-Platform**: Windows (native UNC) and Linux (smbclient)
+- ✅ **Cross-Platform**: Windows (native UNC), Linux (smbclient), and macOS (smbclient)
+- ✅ **WSL Support**: Optionally use smbclient via WSL on Windows
 - ✅ **Dual Authentication**: Kerberos and username/password authentication
 - ✅ **Stream-Based API**: Efficient, memory-friendly file operations
 - ✅ **Async/Await**: Full async support with cancellation tokens
@@ -31,13 +32,17 @@ dotnet add package SmbSharp
 
 ### Package Reference
 ```xml
-<PackageReference Include="SmbSharp" Version="1.0.0" />
+<PackageReference Include="SmbSharp" Version="1.1.0" />
 ```
 
 ## Platform Requirements
 
 ### Windows
 - No additional requirements - uses native UNC path support
+- **Optional WSL support**: If you want to use smbclient via WSL instead of native UNC paths, install WSL and smbclient inside your distribution:
+  ```bash
+  wsl apt-get install smbclient
+  ```
 
 ### Linux
 - Requires `smbclient` to be installed:
@@ -50,6 +55,12 @@ dotnet add package SmbSharp
 
   # Alpine Linux
   apk add samba-client
+  ```
+
+### macOS
+- Requires `smbclient` to be installed:
+  ```bash
+  brew install samba
   ```
 
 ### Docker
@@ -120,6 +131,19 @@ builder.Services.AddSmbSharp(options =>
 });
 ```
 
+#### Using smbclient via WSL on Windows
+```csharp
+// Use smbclient through WSL instead of native UNC paths
+builder.Services.AddSmbSharp(options =>
+{
+    options.UseWsl = true; // Enable WSL smbclient on Windows
+    options.UseKerberos = false;
+    options.Username = "username";
+    options.Password = "password";
+    options.Domain = "DOMAIN";
+});
+```
+
 ### Direct Instantiation (Without Dependency Injection)
 
 ```csharp
@@ -140,6 +164,10 @@ using var loggerFactory = LoggerFactory.Create(builder =>
 
 var handler = FileHandler.CreateWithKerberos(loggerFactory);
 var handler = FileHandler.CreateWithCredentials("username", "password", "DOMAIN", loggerFactory);
+
+// Using smbclient via WSL on Windows
+var handler = FileHandler.CreateWithKerberos(useWsl: true);
+var handler = FileHandler.CreateWithCredentials("username", "password", "DOMAIN", loggerFactory, useWsl: true);
 
 // Usage
 var files = await handler.EnumerateFilesAsync("//server/share/folder");
@@ -221,7 +249,7 @@ await fileHandler.MoveFileAsync(
 );
 ```
 
-> **Note:** On Linux, move operations download and re-upload the file, which can be slow for large files. The operation is atomic with automatic retry logic - if the source deletion fails after copying, it retries once before rolling back the destination to maintain consistency.
+> **Note:** On Linux/macOS (and Windows with WSL), move operations download and re-upload the file, which can be slow for large files. The operation is atomic with automatic retry logic - if the source deletion fails after copying, it retries once before rolling back the destination to maintain consistency.
 
 ### Create a Directory
 ```csharp
@@ -424,7 +452,7 @@ catch (IOException ex)
 }
 catch (PlatformNotSupportedException ex)
 {
-    // Running on unsupported platform (not Windows/Linux)
+    // Running on unsupported platform (not Windows/Linux/macOS)
 }
 ```
 
@@ -456,7 +484,7 @@ Process exited with code: 0
 - All operations are direct file system calls
 - Move operations are atomic and instant (metadata-only)
 
-### Linux
+### Linux / macOS / Windows (WSL)
 - Uses smbclient subprocess - some overhead
 - Read operations download to temp file (auto-cleaned)
 - Write operations upload from temp file

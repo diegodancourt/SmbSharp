@@ -11,6 +11,7 @@ namespace SmbSharp.Business.SmbClient
         private readonly ILogger<SmbClientFileHandler> _logger;
         private readonly IProcessWrapper _processWrapper;
         private readonly bool _useKerberos;
+        private readonly bool _useWsl;
         private readonly string? _username;
         private readonly string? _password;
         private readonly string? _domain;
@@ -38,9 +39,18 @@ namespace SmbSharp.Business.SmbClient
 
                 try
                 {
-                    // ExecuteAsync is async but we need sync for this method
-                    // Use Task.Run to execute synchronously
-                    var result = Task.Run(() => _processWrapper.ExecuteAsync("smbclient", "--version")).Result;
+                    ProcessResult result;
+                    if (_useWsl)
+                    {
+                        // Check smbclient availability through WSL
+                        var args = new List<string> { "smbclient", "--version" };
+                        result = Task.Run(() => _processWrapper.ExecuteAsync("wsl", args)).Result;
+                    }
+                    else
+                    {
+                        result = Task.Run(() => _processWrapper.ExecuteAsync("smbclient", "--version")).Result;
+                    }
+
                     _smbClientAvailable = result.ExitCode == 0;
                     return _smbClientAvailable.Value;
                 }
@@ -54,11 +64,12 @@ namespace SmbSharp.Business.SmbClient
 
         public SmbClientFileHandler(ILogger<SmbClientFileHandler> logger, IProcessWrapper processWrapper,
             bool useKerberos, string? username = null, string? password = null,
-            string? domain = null)
+            string? domain = null, bool useWsl = false)
         {
             _logger = logger;
             _processWrapper = processWrapper ?? throw new ArgumentNullException(nameof(processWrapper));
             _useKerberos = useKerberos;
+            _useWsl = useWsl;
             if (!useKerberos && (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password)))
             {
                 _logger.LogError("Username and Password must be provided when not using Kerberos authentication.");
@@ -310,11 +321,16 @@ namespace SmbSharp.Business.SmbClient
 
             try
             {
-                var argumentList = new List<string>
+                var argumentList = new List<string>();
+
+                // When using WSL, prepend "smbclient" as the first argument (wsl will be the executable)
+                if (_useWsl)
                 {
-                    // Add server/share
-                    $"//{server}/{share}"
-                };
+                    argumentList.Add("smbclient");
+                }
+
+                // Add server/share
+                argumentList.Add($"//{server}/{share}");
 
                 if (_useKerberos)
                 {
@@ -336,24 +352,33 @@ namespace SmbSharp.Business.SmbClient
 
                     try
                     {
-                        var chmodArgs = new List<string> { "600", credentialsFile };
-                        await _processWrapper.ExecuteAsync("chmod", chmodArgs, null, cancellationToken);
+                        if (_useWsl)
+                        {
+                            var chmodArgs = new List<string> { "chmod", "600", ConvertToWslPath(credentialsFile) };
+                            await _processWrapper.ExecuteAsync("wsl", chmodArgs, null, cancellationToken);
+                        }
+                        else
+                        {
+                            var chmodArgs = new List<string> { "600", credentialsFile };
+                            await _processWrapper.ExecuteAsync("chmod", chmodArgs, null, cancellationToken);
+                        }
                     }
                     catch (Exception e)
                     {
                         _logger.LogWarning(e, "Failed to set permissions on SMB credentials file.");
                     }
 
-                    // Use credentials file
+                    // Use credentials file (convert path for WSL if needed)
                     argumentList.Add("-A");
-                    argumentList.Add(credentialsFile);
+                    argumentList.Add(_useWsl ? ConvertToWslPath(credentialsFile) : credentialsFile);
                 }
 
-                // Add command
+                // Add command (convert any Windows paths in the command for WSL)
                 argumentList.Add("-c");
-                argumentList.Add(command);
+                argumentList.Add(_useWsl ? ConvertWindowsPathsInCommand(command) : command);
 
-                var result = await _processWrapper.ExecuteAsync("smbclient", argumentList, null, cancellationToken);
+                var executable = _useWsl ? "wsl" : "smbclient";
+                var result = await _processWrapper.ExecuteAsync(executable, argumentList, null, cancellationToken);
 
                 if (result.ExitCode == 0)
                 {
@@ -445,6 +470,42 @@ namespace SmbSharp.Business.SmbClient
             {
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Converts a Windows absolute path to a WSL path.
+        /// Example: C:\Users\user\file.txt → /mnt/c/Users/user/file.txt
+        /// </summary>
+        private static string ConvertToWslPath(string windowsPath)
+        {
+            if (string.IsNullOrEmpty(windowsPath) || windowsPath.Length < 3)
+                return windowsPath;
+
+            // Match drive letter pattern like C:\ or C:/
+            if (char.IsLetter(windowsPath[0]) && windowsPath[1] == ':' &&
+                (windowsPath[2] == '\\' || windowsPath[2] == '/'))
+            {
+                var drive = char.ToLowerInvariant(windowsPath[0]);
+                var rest = windowsPath.Substring(3).Replace('\\', '/');
+                return $"/mnt/{drive}/{rest}";
+            }
+
+            return windowsPath;
+        }
+
+        /// <summary>
+        /// Converts any Windows absolute paths found within a command string to WSL paths.
+        /// Used for smbclient -c commands that contain local file paths (get/put operations).
+        /// </summary>
+        private static string ConvertWindowsPathsInCommand(string command)
+        {
+            // Match Windows absolute paths like C:\path or D:/path within the command
+            return Regex.Replace(command, @"([A-Za-z]):([\\/])([^\s""]*)", match =>
+            {
+                var drive = char.ToLowerInvariant(match.Groups[1].Value[0]);
+                var rest = match.Groups[3].Value.Replace('\\', '/');
+                return $"/mnt/{drive}/{rest}";
+            });
         }
     }
 }

@@ -24,5 +24,12 @@
         /// Gets or sets the domain for SMB authentication (optional).
         /// </summary>
         public string? Domain { get; set; }
+
+        /// <summary>
+        /// Gets or sets whether to use smbclient via WSL on Windows. Default is false.
+        /// When true, smbclient commands are executed through WSL instead of using native UNC paths.
+        /// This option is only relevant on Windows; on Linux/macOS, smbclient is used directly.
+        /// </summary>
+        public bool UseWsl { get; set; }
     }
 }

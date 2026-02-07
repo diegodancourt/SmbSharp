@@ -88,7 +88,7 @@ namespace SmbSharp.Extensions
                 {
                     var logger = sp.GetRequiredService<ILogger<SmbClientFileHandler>>();
                     var processWrapper = sp.GetRequiredService<IProcessWrapper>();
-                    return new SmbClientFileHandler(logger, processWrapper, true);
+                    return new SmbClientFileHandler(logger, processWrapper, true, useWsl: options.UseWsl);
                 });
             }
             else
@@ -103,11 +103,16 @@ namespace SmbSharp.Extensions
                 {
                     var logger = sp.GetRequiredService<ILogger<SmbClientFileHandler>>();
                     var processWrapper = sp.GetRequiredService<IProcessWrapper>();
-                    return new SmbClientFileHandler(logger, processWrapper, false, options.Username, options.Password, options.Domain);
+                    return new SmbClientFileHandler(logger, processWrapper, false, options.Username, options.Password, options.Domain, useWsl: options.UseWsl);
                 });
             }
 
-            services.AddScoped<IFileHandler, FileHandler>();
+            services.AddScoped<IFileHandler>(sp =>
+            {
+                var logger = sp.GetRequiredService<ILogger<FileHandler>>();
+                var smbClientHandler = sp.GetRequiredService<ISmbClientFileHandler>();
+                return new FileHandler(logger, smbClientHandler, options.UseWsl);
+            });
             return services;
         }
 
@@ -126,17 +131,21 @@ namespace SmbSharp.Extensions
                 return new ProcessWrapper(logger);
             });
 
+            // We need to resolve options at scope-creation time, so store a reference for FileHandler too
+            var resolvedUseWsl = false;
+
             services.AddScoped<ISmbClientFileHandler>(sp =>
             {
                 var options = new SmbSharpOptions();
                 configure(sp, options);
+                resolvedUseWsl = options.UseWsl;
 
                 var logger = sp.GetRequiredService<ILogger<SmbClientFileHandler>>();
                 var processWrapper = sp.GetRequiredService<IProcessWrapper>();
 
                 if (options.UseKerberos)
                 {
-                    return new SmbClientFileHandler(logger, processWrapper, true);
+                    return new SmbClientFileHandler(logger, processWrapper, true, useWsl: options.UseWsl);
                 }
 
                 if (string.IsNullOrEmpty(options.Username) || string.IsNullOrEmpty(options.Password))
@@ -145,10 +154,16 @@ namespace SmbSharp.Extensions
                         "Username and password are required when not using Kerberos authentication");
                 }
 
-                return new SmbClientFileHandler(logger, processWrapper, false, options.Username, options.Password, options.Domain);
+                return new SmbClientFileHandler(logger, processWrapper, false, options.Username, options.Password, options.Domain, useWsl: options.UseWsl);
             });
 
-            services.AddScoped<IFileHandler, FileHandler>();
+            services.AddScoped<IFileHandler>(sp =>
+            {
+                // Resolve ISmbClientFileHandler first (which sets resolvedUseWsl)
+                var smbClientHandler = sp.GetRequiredService<ISmbClientFileHandler>();
+                var logger = sp.GetRequiredService<ILogger<FileHandler>>();
+                return new FileHandler(logger, smbClientHandler, resolvedUseWsl);
+            });
             return services;
         }
 

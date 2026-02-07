@@ -106,7 +106,7 @@ namespace SmbSharp.Tests.Business
         [Fact]
         public void Constructor_OnWindows_DoesNotCheckSmbClient()
         {
-            // This test verifies that on Windows, smbclient availability is not checked
+            // This test verifies that on Windows (without useWsl), smbclient availability is not checked
             if (!OperatingSystem.IsWindows())
             {
                 return; // Skip on non-Windows platforms
@@ -123,7 +123,7 @@ namespace SmbSharp.Tests.Business
 
             // Assert
             Assert.NotNull(handler);
-            // Verify smbclient availability was NOT checked on Windows
+            // Verify smbclient availability was NOT checked on Windows (WSL is opt-in)
             mockSmbClient.Verify(x => x.IsSmbClientAvailable(), Times.Never);
         }
     }
