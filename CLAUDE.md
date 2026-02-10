@@ -1,5 +1,15 @@
 # SmbSharp – Claude Instructions
 
+## Before Any Push (Git or NuGet)
+
+Always run the full test suite and confirm all tests pass before pushing:
+
+```bash
+dotnet test
+```
+
+Never push to Git or NuGet if any tests are failing.
+
 ## Publishing to NuGet
 
 Always do a **clean build** before packing to avoid stale binaries ending up in the package:
