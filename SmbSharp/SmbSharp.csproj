@@ -11,7 +11,7 @@
         <!-- NuGet Package Configuration -->
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <PackageId>SmbSharp</PackageId>
-        <Version>1.1.1</Version>
+        <Version>1.1.2</Version>
         <Authors>Diego Dancourt</Authors>
         <Company>Diego Dancourt</Company>
         <Product>SmbSharp</Product>
@@ -22,7 +22,7 @@
         <RepositoryUrl>https://github.com/diegodancourt/SmbSharp</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
         <PackageTags>smb;cifs;smbclient;file;share;network;kerberos;cross-platform;wsl;macos</PackageTags>
-        <PackageReleaseNotes>v1.1.1: Fix EnumerateFilesAsync on smbclient path: include files with any attribute (not just Archive), correctly parse filenames containing spaces, return empty list for empty directories instead of throwing, and include hidden dot-files (e.g. .gitkeep). v1.1.0: Add macOS support (smbclient), WSL smbclient support on Windows (opt-in), and sample console app.</PackageReleaseNotes>
+        <PackageReleaseNotes>v1.1.2: Repackage of v1.1.1 fixes with clean build (previous package contained stale binaries). Fix EnumerateFilesAsync on smbclient path: include files with any attribute (not just Archive), correctly parse filenames containing spaces, return empty list for empty directories instead of throwing, and include hidden dot-files. v1.1.0: Add macOS support (smbclient), WSL smbclient support on Windows (opt-in), and sample console app.</PackageReleaseNotes>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
     </PropertyGroup>
