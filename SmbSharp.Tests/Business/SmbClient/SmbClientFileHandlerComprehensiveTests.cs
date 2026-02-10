@@ -83,6 +83,32 @@ namespace SmbSharp.Tests.Business.SmbClient
         }
 
         [Fact]
+        public async Task EnumerateFilesAsync_FileNamesWithSpaces_ReturnsFullFileNames()
+        {
+            // Arrange
+            var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
+            var mockProcess = new Mock<IProcessWrapper>();
+
+            var smbClientOutput = @"  my payment file.ach               A     1234  Mon Jan 29 10:00:00 2026
+  another file name.txt              N    56789  Tue Jan 30 11:00:00 2026
+  normal.doc                         A     9999  Wed Jan 31 12:00:00 2026";
+
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
+
+            var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
+
+            // Act
+            var result = await handler.EnumerateFilesAsync("//server/share/path");
+
+            // Assert
+            var files = result.ToList();
+            Assert.Equal(3, files.Count);
+            Assert.Contains("my payment file.ach", files);
+            Assert.Contains("another file name.txt", files);
+            Assert.Contains("normal.doc", files);
+        }
+
+        [Fact]
         public async Task EnumerateFilesAsync_DirectoriesInOutput_ExcludesDirectories()
         {
             // Arrange

@@ -21,6 +21,11 @@ namespace SmbSharp.Business.SmbClient
 
         private static readonly Regex WhitespaceRegexInstance = new(@"\s+", RegexOptions.Compiled);
 
+        // Matches smbclient ls output lines: 2 leading spaces, filename (may contain spaces),
+        // 2+ spaces separator, attribute flags (capital letters), then size digit
+        private static readonly Regex SmbLsLineRegexInstance =
+            new(@"^\s{2}(.+?)\s{2,}([A-Z]+)\s+\d+", RegexOptions.Compiled);
+
         // Cache for smbclient availability check
         private static bool? _smbClientAvailable;
         private static readonly object _smbClientCheckLock = new();
@@ -92,35 +97,41 @@ namespace SmbSharp.Business.SmbClient
                 var (server, share, path) = ParseSmbPath(smbPath);
 
                 var command = string.IsNullOrEmpty(path) ? "ls" : $"ls {path}/*";
-                var output = await ExecuteSmbClientCommandAsync(server, share, command, smbPath, cancellationToken);
 
-                // Parse smbclient output - format is typically:
-                // filename    A    size  date
+                string output;
+                try
+                {
+                    output = await ExecuteSmbClientCommandAsync(server, share, command, smbPath, cancellationToken);
+                }
+                catch (FileNotFoundException) when (!string.IsNullOrEmpty(path))
+                {
+                    // smbclient returns NT_STATUS_NO_SUCH_FILE when ls path/* is run on an empty directory.
+                    // Verify the directory itself exists before returning empty; re-throw if it doesn't.
+                    await ExecuteSmbClientCommandAsync(server, share, $"ls \"{path}\"", smbPath, cancellationToken);
+                    return files;
+                }
 
+                // Parse smbclient ls output. Format per line (2 leading spaces):
+                //   filename                            A      1234  Mon Jan  1 00:00:00 2024
+                // Filenames may contain spaces, so we match via regex rather than whitespace split.
                 var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
                 foreach (var line in lines)
                 {
-                    // Skip directories (marked with 'D'), current/parent dir entries, and header/footer lines
-                    if (line.Contains("blocks of size") || line.Contains("blocks available") ||
-                        line.Trim().StartsWith('.') || string.IsNullOrWhiteSpace(line))
-                    {
+                    if (line.Contains("blocks of size") || line.Contains("blocks available"))
                         continue;
-                    }
 
-                    var parts = WhitespaceRegexInstance.Split(line.Trim());
-                    if (parts.Length < 2)
-                    {
+                    var match = SmbLsLineRegexInstance.Match(line);
+                    if (!match.Success)
                         continue;
-                    }
 
-                    var fileName = parts[0];
-                    var attributes = parts[1];
+                    var fileName = match.Groups[1].Value;
+                    var attributes = match.Groups[2].Value;
 
-                    // Only include files (not directories marked with 'D')
-                    if (attributes.Contains('A') && !attributes.Contains('D') && !string.IsNullOrWhiteSpace(fileName))
-                    {
-                        files.Add(fileName);
-                    }
+                    // Skip . and .. entries and directories
+                    if (fileName == "." || fileName == ".." || attributes.Contains('D'))
+                        continue;
+
+                    files.Add(fileName);
                 }
             }
             catch (Exception ex)
