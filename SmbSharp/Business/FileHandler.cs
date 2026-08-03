@@ -179,6 +179,27 @@ namespace SmbSharp.Business
             }
         }
 
+        // Splits an SMB UNC-style path (e.g. "//server/share/folder/file.txt" or
+        // "\\server\share\folder\file.txt") into its directory and file name components.
+        //
+        // Path.GetDirectoryName/Path.GetFileName cannot be used here: on Linux/macOS they treat
+        // "//server/share/folder/file.txt" as a POSIX path and collapse the leading "//" down to a
+        // single "/" (e.g. producing "/server/share/folder"), which breaks SmbClientFileHandler's UNC
+        // path parsing (see GitHub issue #4). Splitting on the last separator manually avoids this.
+        private static (string directory, string fileName) SplitSmbFilePath(string filePath)
+        {
+            var normalized = filePath.Replace('\\', '/');
+            var lastSeparatorIndex = normalized.LastIndexOf('/');
+
+            if (lastSeparatorIndex < 0)
+                return (string.Empty, normalized);
+
+            var directory = normalized[..lastSeparatorIndex];
+            var fileName = normalized[(lastSeparatorIndex + 1)..];
+
+            return (directory, fileName);
+        }
+
         /// <inheritdoc/>
         public async Task<IEnumerable<string>> EnumerateFilesAsync(string directory,
             CancellationToken cancellationToken = default)
@@ -404,11 +425,9 @@ namespace SmbSharp.Business
                 }, cancellationToken);
             }
 
-            var directory = Path.GetDirectoryName(filePath);
+            var (directory, fileName) = SplitSmbFilePath(filePath);
             if (string.IsNullOrEmpty(directory))
                 throw new ArgumentException("Invalid file path - cannot determine directory", nameof(filePath));
-
-            var fileName = Path.GetFileName(filePath);
             if (string.IsNullOrEmpty(fileName))
                 throw new ArgumentException("Invalid file path - cannot determine file name", nameof(filePath));
 
@@ -459,22 +478,18 @@ namespace SmbSharp.Business
 
                 // For smbclient, we need to download and re-upload since there's no native move command.
                 // This operation is made atomic with retry logic and rollback on failure.
-                var sourceDir = Path.GetDirectoryName(sourceFilePath);
+                var (sourceDir, sourceFileName) = SplitSmbFilePath(sourceFilePath);
                 if (string.IsNullOrEmpty(sourceDir))
                     throw new ArgumentException("Invalid source path - cannot determine directory",
                         nameof(sourceFilePath));
-
-                var sourceFileName = Path.GetFileName(sourceFilePath);
                 if (string.IsNullOrEmpty(sourceFileName))
                     throw new ArgumentException("Invalid source path - cannot determine file name",
                         nameof(sourceFilePath));
 
-                var destDir = Path.GetDirectoryName(destinationFilePath);
+                var (destDir, destFileName) = SplitSmbFilePath(destinationFilePath);
                 if (string.IsNullOrEmpty(destDir))
                     throw new ArgumentException("Invalid destination path - cannot determine directory",
                         nameof(destinationFilePath));
-
-                var destFileName = Path.GetFileName(destinationFilePath);
                 if (string.IsNullOrEmpty(destFileName))
                     throw new ArgumentException("Invalid destination path - cannot determine file name",
                         nameof(destinationFilePath));
@@ -574,11 +589,9 @@ namespace SmbSharp.Business
                 }, cancellationToken);
             }
 
-            var directory = Path.GetDirectoryName(filePath);
+            var (directory, fileName) = SplitSmbFilePath(filePath);
             if (string.IsNullOrEmpty(directory))
                 throw new ArgumentException("Invalid file path - cannot determine directory", nameof(filePath));
-
-            var fileName = Path.GetFileName(filePath);
             if (string.IsNullOrEmpty(fileName))
                 throw new ArgumentException("Invalid file path - cannot determine file name", nameof(filePath));
 

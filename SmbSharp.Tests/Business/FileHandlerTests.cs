@@ -673,6 +673,50 @@ namespace SmbSharp.Tests.Business
                     "//nonexistent/share/dest.txt",
                     cts.Token));
         }
+
+        [Fact]
+        public async Task MoveFileAsync_UncStylePaths_PreservesLeadingDoubleSlash()
+        {
+            // Regression test for GitHub issue #4: Path.GetDirectoryName/GetFileName mangle
+            // "//server/share/folder/file.txt" on Linux (collapsing the leading "//" to a single "/"),
+            // which broke SmbClientFileHandler's UNC path parsing. FileHandler must split paths manually
+            // instead of relying on System.IO.Path for smbclient-routed operations.
+
+            // Arrange
+            var mockLogger = new Mock<ILogger<FileHandler>>();
+            var mockSmbClient = new Mock<ISmbClientFileHandler>();
+            mockSmbClient.Setup(x => x.IsSmbClientAvailable()).Returns(true);
+
+            string? capturedSourceDir = null;
+            string? capturedDestDir = null;
+
+            mockSmbClient
+                .Setup(x => x.GetFileStreamAsync(It.IsAny<string>(), It.IsAny<string>(),
+                    It.IsAny<CancellationToken>()))
+                .Callback<string, string, CancellationToken>((dir, _, _) => capturedSourceDir = dir)
+                .ReturnsAsync(new MemoryStream());
+
+            mockSmbClient
+                .Setup(x => x.WriteFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Stream>(),
+                    It.IsAny<CancellationToken>()))
+                .Callback<string, string, Stream, CancellationToken>((dir, _, _, _) => capturedDestDir = dir)
+                .ReturnsAsync(true);
+
+            mockSmbClient
+                .Setup(x => x.DeleteFileAsync(It.IsAny<string>(), It.IsAny<string>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+
+            // useWsl: true forces the smbclient code path regardless of the OS running the test.
+            var handler = new FileHandler(mockLogger.Object, mockSmbClient.Object, useWsl: true);
+
+            // Act
+            await handler.MoveFileAsync("//server/share/folder/source.txt", "//server/share/folder/dest.txt");
+
+            // Assert
+            Assert.Equal("//server/share/folder", capturedSourceDir);
+            Assert.Equal("//server/share/folder", capturedDestDir);
+        }
     }
 
     /// <summary>

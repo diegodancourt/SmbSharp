@@ -636,8 +636,13 @@ namespace SmbSharp.Business.SmbClient
 
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                // CanConnectAsync intentionally reports connectivity as a bool (callers, e.g. health
+                // checks, only care about success/failure), but swallowing the exception entirely left
+                // no diagnostic trail when this fails in production. Log it so the real cause (auth
+                // failure, timeout, broken session, etc.) is visible without changing the return contract.
+                _logger.LogWarning(ex, "SMB connectivity check failed for {DirectoryPath}", directoryPath);
                 return false;
             }
         }

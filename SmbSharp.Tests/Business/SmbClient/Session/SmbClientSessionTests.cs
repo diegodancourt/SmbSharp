@@ -109,6 +109,28 @@ namespace SmbSharp.Tests.Business.SmbClient.Session
         }
 
         [Fact]
+        public async Task ExecuteAsync_SemicolonSeparatedCommand_SendsEachCommandOnItsOwnLine()
+        {
+            // Regression test: the interactive smbclient prompt ("smb: \>") only accepts one command
+            // per line - unlike the one-shot "smbclient -c 'cmd1;cmd2'" invocation, it does NOT
+            // understand ';'-separated chaining. CanConnectAsync builds commands like
+            // "cd \"path\"; ls", which must be split and sent as separate lines to the persistent
+            // session, or every such call fails immediately (root cause of a production incident).
+            var (session, processMock) = CreateSession();
+            processMock.SetupSequence(p => p.ReadUntilAsync(It.IsAny<Regex>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync("smb: \\> ")
+                .ReturnsAsync("smb: \\subdir\\> ")
+                .ReturnsAsync("  file1.txt                          A      123  Mon Jan  1 00:00:00 2026\nsmb: \\subdir\\> ");
+
+            await session.InitializeAsync();
+            var output = await session.ExecuteAsync("cd \"subdir\"; ls", "//server1/share1/subdir");
+
+            Assert.Contains("file1.txt", output);
+            processMock.Verify(p => p.WriteLineAsync("cd \"subdir\"", It.IsAny<CancellationToken>()), Times.Once);
+            processMock.Verify(p => p.WriteLineAsync("ls", It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Fact]
         public async Task InitializeAsync_UsernamePassword_BuildsCredentialsFileArgument()
         {
             var (session, processMock) = CreateSession(useKerberos: false, username: "svc-user", password: "pw",
