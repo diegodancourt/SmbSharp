@@ -9,6 +9,7 @@ A cross-platform .NET library for SMB/CIFS file operations. Works seamlessly on 
 
 - ✅ **Cross-Platform**: Windows (native UNC), Linux (smbclient), and macOS (smbclient)
 - ✅ **WSL Support**: Optionally use smbclient via WSL on Windows
+- ✅ **Persistent Session Pooling**: Optionally reuse a small pool of authenticated smbclient sessions per share, avoiding a full connect/negotiate/Kerberos-or-NTLM handshake on every call
 - ✅ **Dual Authentication**: Kerberos and username/password authentication
 - ✅ **Stream-Based API**: Efficient, memory-friendly file operations
 - ✅ **Async/Await**: Full async support with cancellation tokens
@@ -32,7 +33,7 @@ dotnet add package SmbSharp
 
 ### Package Reference
 ```xml
-<PackageReference Include="SmbSharp" Version="1.1.0" />
+<PackageReference Include="SmbSharp" Version="2.0.0-preview.5" />
 ```
 
 ## Platform Requirements
@@ -62,6 +63,25 @@ dotnet add package SmbSharp
   ```bash
   brew install samba
   ```
+
+### Session Pooling Requirement (`script` / `util-linux`)
+When `UseSessionPool = true`, smbclient is invoked through the `script` utility (part of
+`util-linux`) to allocate a pseudo-terminal, since smbclient never prints its interactive prompt
+otherwise. `script` ships by default on virtually all Linux distributions and macOS, so this
+usually requires no extra installation - but minimal container base images (e.g. Alpine, or
+distroless-style images) may need it added explicitly alongside `smbclient`:
+```bash
+# Debian/Ubuntu
+sudo apt-get install util-linux
+
+# Alpine Linux
+apk add util-linux
+
+# RHEL/CentOS
+sudo yum install util-linux
+```
+This requirement does not apply when `UseSessionPool` is left at its default (`false`), or on
+native Windows (UNC paths without WSL).
 
 ### Docker
 Add smbclient to your Dockerfile:
@@ -144,6 +164,22 @@ builder.Services.AddSmbSharp(options =>
 });
 ```
 
+#### Persistent Session Pooling (smbclient only)
+```csharp
+// Reuse a small pool of authenticated smbclient sessions per share instead of paying the
+// full connect/negotiate/Kerberos-or-NTLM handshake cost on every single file operation.
+builder.Services.AddSmbSharp(options =>
+{
+    options.UseKerberos = false;
+    options.Username = "username";
+    options.Password = "password";
+    options.Domain = "DOMAIN";
+    options.UseSessionPool = true;              // opt-in, default is false
+    options.SessionPoolSize = 3;                // sessions kept per (server, share), default 3
+    options.SessionIdleTimeout = TimeSpan.FromMinutes(5); // evict idle sessions, default 15 minutes
+});
+```
+
 ### Direct Instantiation (Without Dependency Injection)
 
 ```csharp
@@ -168,6 +204,11 @@ var handler = FileHandler.CreateWithCredentials("username", "password", "DOMAIN"
 // Using smbclient via WSL on Windows
 var handler = FileHandler.CreateWithKerberos(useWsl: true);
 var handler = FileHandler.CreateWithCredentials("username", "password", "DOMAIN", loggerFactory, useWsl: true);
+
+// With persistent session pooling (reuses authenticated smbclient sessions per share)
+var handler = FileHandler.CreateWithCredentials(
+    "username", "password", "DOMAIN", loggerFactory,
+    useWsl: false, useSessionPool: true, sessionPoolSize: 3, sessionIdleTimeout: TimeSpan.FromMinutes(5));
 
 // Usage
 var files = await handler.EnumerateFilesAsync("//server/share/folder");
@@ -297,6 +338,36 @@ klist
 
 ### Username/Password Authentication
 Credentials are securely passed to smbclient via environment variables, not command-line arguments, preventing exposure in process listings.
+
+## Persistent Session Pooling
+
+By default, every `IFileHandler` call on the smbclient path (Linux/macOS, or Windows via WSL)
+spawns a brand-new `smbclient` process, which pays the full TCP connect + SMB negotiate +
+Kerberos/NTLM handshake cost every single time. This is especially expensive with Kerberos, and
+adds up quickly for frequent calls (e.g. health checks polling share connectivity).
+
+Setting `UseSessionPool = true` (or passing `useSessionPool: true` to `FileHandler.CreateWithKerberos`/
+`CreateWithCredentials`) keeps a small pool of long-lived, already-authenticated interactive
+`smbclient` sessions open per `(server, share)` pair, and reuses them across calls:
+
+- Concurrent calls to the same share are spread round-robin across `SessionPoolSize` sessions
+  instead of queuing behind a single connection.
+- If a session dies mid-operation (e.g. network blip, idle server-side timeout), it is
+  transparently recreated and the operation is retried once.
+- Idle sessions are evicted and disposed after `SessionIdleTimeout` to avoid holding stale
+  connections open indefinitely.
+- This option only affects the smbclient path; on native Windows (UNC paths, no WSL), each call is
+  already a direct file-system operation with no process-spawn or handshake cost, so pooling is a
+  no-op there.
+
+Under the hood, session-pooled connections invoke `smbclient` through `script -qec "<command>"
+/dev/null` rather than directly. This is required because `smbclient` only prints its interactive
+`smb: \>` prompt when its stdin is attached to a real TTY - a plain piped/redirected invocation
+(the only kind possible from .NET's `Process` class) never produces a prompt at all, which the
+persistent session relies on to know a command has finished. Wrapping with `script` allocates a
+pseudo-terminal so the prompt is emitted as expected. This requires the `script` utility (part of
+`util-linux`, already present on essentially all Linux distributions and macOS) to be available
+wherever `smbclient` runs, including inside WSL if `UseWsl` is also enabled.
 
 ## Health Checks
 
@@ -490,6 +561,9 @@ Process exited with code: 0
 - Write operations upload from temp file
 - Move operations = download + upload + delete (can be slow for large files)
 - For large files, consider alternative approaches or be aware of 2x disk space + network transfer
+- Enable `UseSessionPool` (see [Persistent Session Pooling](#persistent-session-pooling)) to avoid
+  re-paying the connect/negotiate/Kerberos-or-NTLM handshake cost on every call - this is usually
+  the dominant cost, especially with Kerberos or with frequent calls like health checks
 
 ## Security Features
 
