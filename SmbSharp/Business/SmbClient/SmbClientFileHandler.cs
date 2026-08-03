@@ -630,8 +630,14 @@ namespace SmbSharp.Business.SmbClient
                 // Parse SMB path: //server/share/path or \\server\share\path
                 var (server, share, path) = ParseSmbPath(directoryPath);
 
-                // Try to list files to test connection - if path is specified, check that specific directory
-                var command = string.IsNullOrEmpty(path) ? "ls" : $"cd \"{path}\"; ls";
+                // Try to list files to test connection - if path is specified, check that specific directory.
+                // IMPORTANT: never use "cd" here. When commands run through the persistent session pool,
+                // "cd" permanently changes that pooled session's working directory for every future
+                // command that happens to reuse the same slot - other unrelated relative-path commands
+                // (e.g. EnumerateFilesAsync's "ls {path}/*") would then resolve against the wrong
+                // directory and silently find nothing. Use an absolute (leading "/") path instead, which
+                // is always resolved from the share root regardless of the session's current directory.
+                var command = string.IsNullOrEmpty(path) ? "ls \"/\"" : $"ls \"/{path}\"";
                 await ExecuteSmbClientCommandAsync(server, share, command, directoryPath, cancellationToken);
 
                 return true;
