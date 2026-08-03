@@ -1,6 +1,7 @@
 ﻿using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using SmbSharp.Business.Interfaces;
+using SmbSharp.Business.SmbClient.Session;
 using SmbSharp.Enums;
 using SmbSharp.Infrastructure.Interfaces;
 
@@ -10,6 +11,7 @@ namespace SmbSharp.Business.SmbClient
     {
         private readonly ILogger<SmbClientFileHandler> _logger;
         private readonly IProcessWrapper _processWrapper;
+        private readonly ISmbClientSessionPool? _sessionPool;
         private readonly bool _useKerberos;
         private readonly bool _useWsl;
         private readonly string? _username;
@@ -69,10 +71,11 @@ namespace SmbSharp.Business.SmbClient
 
         public SmbClientFileHandler(ILogger<SmbClientFileHandler> logger, IProcessWrapper processWrapper,
             bool useKerberos, string? username = null, string? password = null,
-            string? domain = null, bool useWsl = false)
+            string? domain = null, bool useWsl = false, ISmbClientSessionPool? sessionPool = null)
         {
             _logger = logger;
             _processWrapper = processWrapper ?? throw new ArgumentNullException(nameof(processWrapper));
+            _sessionPool = sessionPool;
             _useKerberos = useKerberos;
             _useWsl = useWsl;
             if (!useKerberos && (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password)))
@@ -328,6 +331,14 @@ namespace SmbSharp.Business.SmbClient
         private async Task<string> ExecuteSmbClientCommandAsync(string server, string share, string command,
             string contextPath, CancellationToken cancellationToken = default)
         {
+            if (_sessionPool != null)
+            {
+                // Reuse a pooled, persistent, already-authenticated smbclient session instead of
+                // spawning a new process (and re-running the full connect/negotiate/Kerberos
+                // handshake) for every single command.
+                return await _sessionPool.ExecuteAsync(server, share, command, contextPath, cancellationToken);
+            }
+
             string? credentialsFile = null;
 
             try
@@ -483,40 +494,10 @@ namespace SmbSharp.Business.SmbClient
             }
         }
 
-        /// <summary>
-        /// Converts a Windows absolute path to a WSL path.
-        /// Example: C:\Users\user\file.txt → /mnt/c/Users/user/file.txt
-        /// </summary>
-        private static string ConvertToWslPath(string windowsPath)
-        {
-            if (string.IsNullOrEmpty(windowsPath) || windowsPath.Length < 3)
-                return windowsPath;
+        private static string ConvertToWslPath(string windowsPath) =>
+            SmbClientPathUtil.ConvertToWslPath(windowsPath);
 
-            // Match drive letter pattern like C:\ or C:/
-            if (char.IsLetter(windowsPath[0]) && windowsPath[1] == ':' &&
-                (windowsPath[2] == '\\' || windowsPath[2] == '/'))
-            {
-                var drive = char.ToLowerInvariant(windowsPath[0]);
-                var rest = windowsPath.Substring(3).Replace('\\', '/');
-                return $"/mnt/{drive}/{rest}";
-            }
-
-            return windowsPath;
-        }
-
-        /// <summary>
-        /// Converts any Windows absolute paths found within a command string to WSL paths.
-        /// Used for smbclient -c commands that contain local file paths (get/put operations).
-        /// </summary>
-        private static string ConvertWindowsPathsInCommand(string command)
-        {
-            // Match Windows absolute paths like C:\path or D:/path within the command
-            return Regex.Replace(command, @"([A-Za-z]):([\\/])([^\s""]*)", match =>
-            {
-                var drive = char.ToLowerInvariant(match.Groups[1].Value[0]);
-                var rest = match.Groups[3].Value.Replace('\\', '/');
-                return $"/mnt/{drive}/{rest}";
-            });
-        }
+        private static string ConvertWindowsPathsInCommand(string command) =>
+            SmbClientPathUtil.ConvertWindowsPathsInCommand(command);
     }
 }

@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using SmbSharp.Business;
 using SmbSharp.Business.Interfaces;
 using SmbSharp.Business.SmbClient;
+using SmbSharp.Business.SmbClient.Session;
 using SmbSharp.HealthChecks;
 using SmbSharp.Infrastructure;
 using SmbSharp.Infrastructure.Interfaces;
@@ -82,13 +83,33 @@ namespace SmbSharp.Extensions
                 return new ProcessWrapper(logger);
             });
 
+            if (options.UseSessionPool)
+            {
+                services.AddSingleton<IInteractiveProcessFactory>(sp =>
+                    new InteractiveProcessFactory(sp.GetService<ILoggerFactory>()));
+
+                // Registered as a singleton (not scoped) so the pool - and its persistent, already
+                // authenticated smbclient sessions - are shared and reused across requests instead
+                // of being recreated (and re-authenticated) per scope.
+                services.AddSingleton<ISmbClientSessionPool>(sp =>
+                {
+                    var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+                    var processFactory = sp.GetRequiredService<IInteractiveProcessFactory>();
+                    return new SmbClientSessionPool(loggerFactory, processFactory, options.UseKerberos,
+                        options.Username, options.Password, options.Domain, options.UseWsl,
+                        options.SessionPoolSize, options.SessionIdleTimeout);
+                });
+            }
+
             if (options.UseKerberos)
             {
                 services.AddScoped<ISmbClientFileHandler>(sp =>
                 {
                     var logger = sp.GetRequiredService<ILogger<SmbClientFileHandler>>();
                     var processWrapper = sp.GetRequiredService<IProcessWrapper>();
-                    return new SmbClientFileHandler(logger, processWrapper, true, useWsl: options.UseWsl);
+                    var sessionPool = options.UseSessionPool ? sp.GetRequiredService<ISmbClientSessionPool>() : null;
+                    return new SmbClientFileHandler(logger, processWrapper, true, useWsl: options.UseWsl,
+                        sessionPool: sessionPool);
                 });
             }
             else
@@ -103,7 +124,8 @@ namespace SmbSharp.Extensions
                 {
                     var logger = sp.GetRequiredService<ILogger<SmbClientFileHandler>>();
                     var processWrapper = sp.GetRequiredService<IProcessWrapper>();
-                    return new SmbClientFileHandler(logger, processWrapper, false, options.Username, options.Password, options.Domain, useWsl: options.UseWsl);
+                    var sessionPool = options.UseSessionPool ? sp.GetRequiredService<ISmbClientSessionPool>() : null;
+                    return new SmbClientFileHandler(logger, processWrapper, false, options.Username, options.Password, options.Domain, useWsl: options.UseWsl, sessionPool: sessionPool);
                 });
             }
 
