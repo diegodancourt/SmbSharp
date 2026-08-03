@@ -1,9 +1,11 @@
-﻿using System.Text.RegularExpressions;
+﻿using System.Globalization;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using SmbSharp.Business.Interfaces;
 using SmbSharp.Business.SmbClient.Session;
 using SmbSharp.Enums;
 using SmbSharp.Infrastructure.Interfaces;
+using SmbSharp.Models;
 
 namespace SmbSharp.Business.SmbClient
 {
@@ -93,57 +95,203 @@ namespace SmbSharp.Business.SmbClient
         public async Task<IEnumerable<string>> EnumerateFilesAsync(string smbPath,
             CancellationToken cancellationToken = default)
         {
-            var files = new List<string>();
             try
             {
-                // Parse SMB path: //server/share/path or \\server\share\path
-                var (server, share, path) = ParseSmbPath(smbPath);
-
-                var command = string.IsNullOrEmpty(path) ? "ls" : $"ls {path}/*";
-
-                string output;
-                try
-                {
-                    output = await ExecuteSmbClientCommandAsync(server, share, command, smbPath, cancellationToken);
-                }
-                catch (FileNotFoundException) when (!string.IsNullOrEmpty(path))
-                {
-                    // smbclient returns NT_STATUS_NO_SUCH_FILE when ls path/* is run on an empty directory.
-                    // Verify the directory itself exists before returning empty; re-throw if it doesn't.
-                    await ExecuteSmbClientCommandAsync(server, share, $"ls \"{path}\"", smbPath, cancellationToken);
-                    return files;
-                }
-
-                // Parse smbclient ls output. Format per line (2 leading spaces):
-                //   filename                            A      1234  Mon Jan  1 00:00:00 2024
-                // Filenames may contain spaces, so we match via regex rather than whitespace split.
-                var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-                foreach (var line in lines)
-                {
-                    if (line.Contains("blocks of size") || line.Contains("blocks available"))
-                        continue;
-
-                    var match = SmbLsLineRegexInstance.Match(line);
-                    if (!match.Success)
-                        continue;
-
-                    var fileName = match.Groups[1].Value;
-                    var attributes = match.Groups[2].Value;
-
-                    // Skip . and .. entries and directories
-                    if (fileName == "." || fileName == ".." || attributes.Contains('D'))
-                        continue;
-
-                    files.Add(fileName);
-                }
+                return await EnumerateLsEntriesAsync(smbPath, includeDirectories: false, cancellationToken);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error enumerating files in SMB path: {SmbPath}", smbPath);
                 throw;
             }
+        }
 
-            return files;
+        public async Task<IEnumerable<string>> EnumerateDirectoriesAsync(string smbPath,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                return await EnumerateLsEntriesAsync(smbPath, includeDirectories: true, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error enumerating directories in SMB path: {SmbPath}", smbPath);
+                throw;
+            }
+        }
+
+        private async Task<IEnumerable<string>> EnumerateLsEntriesAsync(string smbPath, bool includeDirectories,
+            CancellationToken cancellationToken)
+        {
+            var entries = new List<string>();
+
+            // Parse SMB path: //server/share/path or \\server\share\path
+            var (server, share, path) = ParseSmbPath(smbPath);
+
+            var command = string.IsNullOrEmpty(path) ? "ls" : $"ls {path}/*";
+
+            string output;
+            try
+            {
+                output = await ExecuteSmbClientCommandAsync(server, share, command, smbPath, cancellationToken);
+            }
+            catch (FileNotFoundException) when (!string.IsNullOrEmpty(path))
+            {
+                // smbclient returns NT_STATUS_NO_SUCH_FILE when ls path/* is run on an empty directory.
+                // Verify the directory itself exists before returning empty; re-throw if it doesn't.
+                await ExecuteSmbClientCommandAsync(server, share, $"ls \"{path}\"", smbPath, cancellationToken);
+                return entries;
+            }
+
+            // Parse smbclient ls output. Format per line (2 leading spaces):
+            //   filename                            A      1234  Mon Jan  1 00:00:00 2024
+            // Filenames may contain spaces, so we match via regex rather than whitespace split.
+            var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var line in lines)
+            {
+                if (line.Contains("blocks of size") || line.Contains("blocks available"))
+                    continue;
+
+                var match = SmbLsLineRegexInstance.Match(line);
+                if (!match.Success)
+                    continue;
+
+                var entryName = match.Groups[1].Value;
+                var attributes = match.Groups[2].Value;
+
+                // Always skip . and .. entries
+                if (entryName == "." || entryName == "..")
+                    continue;
+
+                var isDirectory = attributes.Contains('D');
+                if (isDirectory != includeDirectories)
+                    continue;
+
+                entries.Add(entryName);
+            }
+
+            return entries;
+        }
+
+        public async Task<SmbFileInfo> GetFileInfoAsync(string smbPath, string fileName,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                // Parse SMB path: //server/share/path or \\server\share\path
+                var (server, share, remotePath) = ParseSmbPath(smbPath);
+
+                var remoteFilePath = string.IsNullOrEmpty(remotePath)
+                    ? fileName
+                    : $"{remotePath}/{fileName}";
+
+                var command = $"allinfo \"{remoteFilePath}\"";
+                var output = await ExecuteSmbClientCommandAsync(server, share, command, smbPath, cancellationToken);
+
+                return ParseAllInfoOutput(output);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving file info for {FileName} in {SmbPath}", fileName, smbPath);
+                throw;
+            }
+        }
+
+        private static SmbFileInfo ParseAllInfoOutput(string output)
+        {
+            string? altName = null;
+            DateTime? createTime = null;
+            DateTime? accessTime = null;
+            DateTime? writeTime = null;
+            DateTime? changeTime = null;
+            string? attributes = null;
+            var streams = new List<string>();
+
+            var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var rawLine in lines)
+            {
+                var line = rawLine.TrimEnd('\r');
+                var separatorIndex = line.IndexOf(':');
+                if (separatorIndex < 0)
+                    continue;
+
+                var key = line[..separatorIndex].Trim();
+                var value = line[(separatorIndex + 1)..].Trim();
+
+                switch (key)
+                {
+                    case "altname":
+                        altName = value;
+                        break;
+                    case "create_time":
+                        createTime = ParseAllInfoTimestamp(value);
+                        break;
+                    case "access_time":
+                        accessTime = ParseAllInfoTimestamp(value);
+                        break;
+                    case "write_time":
+                        writeTime = ParseAllInfoTimestamp(value);
+                        break;
+                    case "change_time":
+                        changeTime = ParseAllInfoTimestamp(value);
+                        break;
+                    case "attributes":
+                        attributes = value;
+                        break;
+                    case "stream":
+                        streams.Add(value);
+                        break;
+                }
+            }
+
+            return new SmbFileInfo
+            {
+                AlternateName = altName,
+                CreateTime = createTime,
+                AccessTime = accessTime,
+                WriteTime = writeTime,
+                ChangeTime = changeTime,
+                Attributes = attributes,
+                Streams = streams
+            };
+        }
+
+        // smbclient's allinfo timestamps typically look like: "Mon Jun 15 03:42:18 2020",
+        // sometimes with an AM/PM marker and/or trailing timezone abbreviation appended
+        // (e.g. "Mon Jun 15 03:42:18 AM 2020 CEST"). Try a set of known formats, then fall back
+        // to stripping the last whitespace-separated token(s) (AM/PM, timezone) and retrying.
+        private static readonly string[] AllInfoTimestampFormats =
+        {
+            "ddd MMM d HH:mm:ss yyyy",
+            "ddd MMM dd HH:mm:ss yyyy",
+            "ddd MMM d hh:mm:ss tt yyyy",
+            "ddd MMM dd hh:mm:ss tt yyyy"
+        };
+
+        private static DateTime? ParseAllInfoTimestamp(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return null;
+
+            var candidate = value.Trim();
+
+            // Try progressively stripping trailing tokens (e.g. a timezone abbreviation) up to twice.
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                if (DateTime.TryParseExact(candidate, AllInfoTimestampFormats, CultureInfo.InvariantCulture,
+                        DateTimeStyles.AllowWhiteSpaces, out var parsed))
+                {
+                    return parsed;
+                }
+
+                var lastSpace = candidate.LastIndexOf(' ');
+                if (lastSpace <= 0)
+                    break;
+
+                candidate = candidate[..lastSpace];
+            }
+
+            return null;
         }
 
         public async Task<bool> FileExistsAsync(string fileName, string smbPath,
@@ -488,8 +636,13 @@ namespace SmbSharp.Business.SmbClient
 
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                // CanConnectAsync intentionally reports connectivity as a bool (callers, e.g. health
+                // checks, only care about success/failure), but swallowing the exception entirely left
+                // no diagnostic trail when this fails in production. Log it so the real cause (auth
+                // failure, timeout, broken session, etc.) is visible without changing the return contract.
+                _logger.LogWarning(ex, "SMB connectivity check failed for {DirectoryPath}", directoryPath);
                 return false;
             }
         }

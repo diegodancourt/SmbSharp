@@ -1,4 +1,6 @@
-﻿namespace SmbSharp.Business.Interfaces
+﻿using SmbSharp.Models;
+
+namespace SmbSharp.Business.Interfaces
 {
     /// <summary>
     /// Provides an interface for file operations on SMB/CIFS shares across different platforms.
@@ -16,6 +18,38 @@
         /// <exception cref="IOException">Thrown when the SMB operation fails</exception>
         /// <exception cref="OperationCanceledException">Thrown when the operation is cancelled</exception>
         Task<IEnumerable<string>> EnumerateFilesAsync(string directory, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Enumerates all subdirectories in the specified directory on an SMB share.
+        /// </summary>
+        /// <param name="directory">The SMB directory path (e.g., "//server/share/path" or "\\server\share\path")</param>
+        /// <param name="cancellationToken">Token to cancel the operation</param>
+        /// <returns>A collection of subdirectory names in the directory (not full paths, just names)</returns>
+        /// <exception cref="DirectoryNotFoundException">Thrown when the directory does not exist or is not accessible</exception>
+        /// <exception cref="IOException">Thrown when the SMB operation fails</exception>
+        /// <exception cref="OperationCanceledException">Thrown when the operation is cancelled</exception>
+        Task<IEnumerable<string>> EnumerateDirectoriesAsync(string directory,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Retrieves extended metadata (creation/access/write/change times, attributes, and, on
+        /// Linux/macOS via smbclient, alternate data streams) for a file or subdirectory on an SMB share.
+        /// </summary>
+        /// <param name="directory">The SMB directory path containing the file (e.g., "//server/share/path")</param>
+        /// <param name="fileName">The name of the file or subdirectory to inspect (not full path, just name)</param>
+        /// <param name="cancellationToken">Token to cancel the operation</param>
+        /// <returns>An <see cref="SmbFileInfo"/> describing the file's metadata.</returns>
+        /// <exception cref="FileNotFoundException">Thrown when the file does not exist or is not accessible</exception>
+        /// <exception cref="IOException">Thrown when the SMB operation fails</exception>
+        /// <exception cref="OperationCanceledException">Thrown when the operation is cancelled</exception>
+        /// <remarks>
+        /// On non-Windows platforms (or Windows with useWsl), this wraps smbclient's <c>allinfo</c> command,
+        /// which reports alternate data streams (e.g. "Zone.Identifier"). On Windows native UNC paths,
+        /// streams are not reported since .NET has no built-in API for enumerating them, and ChangeTime
+        /// falls back to the write time since Windows does not expose a distinct metadata-change time via .NET.
+        /// </remarks>
+        Task<SmbFileInfo> GetFileInfoAsync(string directory, string fileName,
+            CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Checks if a file exists in the specified directory on an SMB share.

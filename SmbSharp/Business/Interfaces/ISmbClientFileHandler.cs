@@ -1,4 +1,5 @@
 ﻿using SmbSharp.Enums;
+using SmbSharp.Models;
 
 namespace SmbSharp.Business.Interfaces
 {
@@ -20,6 +21,25 @@ namespace SmbSharp.Business.Interfaces
         /// <param name="cancellationToken">A token to cancel the operation.</param>
         /// <returns>A collection of file names in the specified path.</returns>
         Task<IEnumerable<string>> EnumerateFilesAsync(string smbPath, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Enumerates subdirectories in the specified SMB path (excludes "." and "..").
+        /// </summary>
+        /// <param name="smbPath">The SMB path in UNC format (e.g., \\server\share\path).</param>
+        /// <param name="cancellationToken">A token to cancel the operation.</param>
+        /// <returns>A collection of directory names in the specified path.</returns>
+        Task<IEnumerable<string>> EnumerateDirectoriesAsync(string smbPath,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Retrieves extended metadata for a file or directory using smbclient's <c>allinfo</c> command.
+        /// </summary>
+        /// <param name="smbPath">The SMB directory path containing the file (e.g., \\server\share\path).</param>
+        /// <param name="fileName">The name of the file or subdirectory to inspect.</param>
+        /// <param name="cancellationToken">A token to cancel the operation.</param>
+        /// <returns>An <see cref="SmbFileInfo"/> describing the file's metadata.</returns>
+        Task<SmbFileInfo> GetFileInfoAsync(string smbPath, string fileName,
+            CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Checks if a file exists in the specified SMB directory.

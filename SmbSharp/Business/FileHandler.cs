@@ -7,6 +7,7 @@ using SmbSharp.Business.SmbClient;
 using SmbSharp.Business.SmbClient.Session;
 using SmbSharp.Enums;
 using SmbSharp.Infrastructure;
+using SmbSharp.Models;
 
 namespace SmbSharp.Business
 {
@@ -178,6 +179,27 @@ namespace SmbSharp.Business
             }
         }
 
+        // Splits an SMB UNC-style path (e.g. "//server/share/folder/file.txt" or
+        // "\\server\share\folder\file.txt") into its directory and file name components.
+        //
+        // Path.GetDirectoryName/Path.GetFileName cannot be used here: on Linux/macOS they treat
+        // "//server/share/folder/file.txt" as a POSIX path and collapse the leading "//" down to a
+        // single "/" (e.g. producing "/server/share/folder"), which breaks SmbClientFileHandler's UNC
+        // path parsing (see GitHub issue #4). Splitting on the last separator manually avoids this.
+        private static (string directory, string fileName) SplitSmbFilePath(string filePath)
+        {
+            var normalized = filePath.Replace('\\', '/');
+            var lastSeparatorIndex = normalized.LastIndexOf('/');
+
+            if (lastSeparatorIndex < 0)
+                return (string.Empty, normalized);
+
+            var directory = normalized[..lastSeparatorIndex];
+            var fileName = normalized[(lastSeparatorIndex + 1)..];
+
+            return (directory, fileName);
+        }
+
         /// <inheritdoc/>
         public async Task<IEnumerable<string>> EnumerateFilesAsync(string directory,
             CancellationToken cancellationToken = default)
@@ -205,6 +227,85 @@ namespace SmbSharp.Business
                 return Directory.EnumerateFiles(directory)
                     .Select(Path.GetFileName)
                     .Where(f => !string.IsNullOrEmpty(f))!;
+            }, cancellationToken);
+        }
+
+        /// <inheritdoc/>
+        public async Task<IEnumerable<string>> EnumerateDirectoriesAsync(string directory,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(directory))
+                throw new ArgumentException("Directory path cannot be null or empty", nameof(directory));
+
+            if (_useSmbClient)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return await _smbClientFileHandler.EnumerateDirectoriesAsync(directory, cancellationToken);
+            }
+
+            // Use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
+            return await Task.Run(IEnumerable<string> () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (!Directory.Exists(directory))
+                {
+                    throw new DirectoryNotFoundException(
+                        $"The directory {directory} could not be found or I don't have access to it");
+                }
+
+                return Directory.EnumerateDirectories(directory)
+                    .Select(Path.GetFileName)
+                    .Where(f => !string.IsNullOrEmpty(f))!;
+            }, cancellationToken);
+        }
+
+        /// <inheritdoc/>
+        public async Task<SmbFileInfo> GetFileInfoAsync(string directory, string fileName,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(directory))
+                throw new ArgumentException("Directory path cannot be null or empty", nameof(directory));
+            if (string.IsNullOrWhiteSpace(fileName))
+                throw new ArgumentException("File name cannot be null or empty", nameof(fileName));
+
+            if (_useSmbClient)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return await _smbClientFileHandler.GetFileInfoAsync(directory, fileName, cancellationToken);
+            }
+
+            // Use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
+            return await Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var fullPath = Path.Combine(directory, fileName);
+                var isDirectory = Directory.Exists(fullPath);
+                if (!isDirectory && !File.Exists(fullPath))
+                {
+                    throw new FileNotFoundException(
+                        $"The file {fullPath} could not be found or I don't have access to it");
+                }
+
+                var attributes = isDirectory
+                    ? new DirectoryInfo(fullPath).Attributes
+                    : new System.IO.FileInfo(fullPath).Attributes;
+
+                // .NET has no built-in way to enumerate NTFS alternate data streams, and no distinct
+                // "change time" concept, so ChangeTime falls back to the write time.
+                return new SmbFileInfo
+                {
+                    AlternateName = null,
+                    CreateTime = isDirectory ? Directory.GetCreationTime(fullPath) : File.GetCreationTime(fullPath),
+                    AccessTime = isDirectory
+                        ? Directory.GetLastAccessTime(fullPath)
+                        : File.GetLastAccessTime(fullPath),
+                    WriteTime = isDirectory ? Directory.GetLastWriteTime(fullPath) : File.GetLastWriteTime(fullPath),
+                    ChangeTime = isDirectory ? Directory.GetLastWriteTime(fullPath) : File.GetLastWriteTime(fullPath),
+                    Attributes = attributes.ToString(),
+                    Streams = Array.Empty<string>()
+                };
             }, cancellationToken);
         }
 
@@ -324,11 +425,9 @@ namespace SmbSharp.Business
                 }, cancellationToken);
             }
 
-            var directory = Path.GetDirectoryName(filePath);
+            var (directory, fileName) = SplitSmbFilePath(filePath);
             if (string.IsNullOrEmpty(directory))
                 throw new ArgumentException("Invalid file path - cannot determine directory", nameof(filePath));
-
-            var fileName = Path.GetFileName(filePath);
             if (string.IsNullOrEmpty(fileName))
                 throw new ArgumentException("Invalid file path - cannot determine file name", nameof(filePath));
 
@@ -379,22 +478,18 @@ namespace SmbSharp.Business
 
                 // For smbclient, we need to download and re-upload since there's no native move command.
                 // This operation is made atomic with retry logic and rollback on failure.
-                var sourceDir = Path.GetDirectoryName(sourceFilePath);
+                var (sourceDir, sourceFileName) = SplitSmbFilePath(sourceFilePath);
                 if (string.IsNullOrEmpty(sourceDir))
                     throw new ArgumentException("Invalid source path - cannot determine directory",
                         nameof(sourceFilePath));
-
-                var sourceFileName = Path.GetFileName(sourceFilePath);
                 if (string.IsNullOrEmpty(sourceFileName))
                     throw new ArgumentException("Invalid source path - cannot determine file name",
                         nameof(sourceFilePath));
 
-                var destDir = Path.GetDirectoryName(destinationFilePath);
+                var (destDir, destFileName) = SplitSmbFilePath(destinationFilePath);
                 if (string.IsNullOrEmpty(destDir))
                     throw new ArgumentException("Invalid destination path - cannot determine directory",
                         nameof(destinationFilePath));
-
-                var destFileName = Path.GetFileName(destinationFilePath);
                 if (string.IsNullOrEmpty(destFileName))
                     throw new ArgumentException("Invalid destination path - cannot determine file name",
                         nameof(destinationFilePath));
@@ -494,11 +589,9 @@ namespace SmbSharp.Business
                 }, cancellationToken);
             }
 
-            var directory = Path.GetDirectoryName(filePath);
+            var (directory, fileName) = SplitSmbFilePath(filePath);
             if (string.IsNullOrEmpty(directory))
                 throw new ArgumentException("Invalid file path - cannot determine directory", nameof(filePath));
-
-            var fileName = Path.GetFileName(filePath);
             if (string.IsNullOrEmpty(fileName))
                 throw new ArgumentException("Invalid file path - cannot determine file name", nameof(filePath));
 

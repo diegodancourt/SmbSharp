@@ -104,31 +104,48 @@ namespace SmbSharp.Business.SmbClient.Session
                 // path already does in SmbClientFileHandler.ExecuteSmbClientCommandAsync.
                 var effectiveCommand = _useWsl ? SmbClientPathUtil.ConvertWindowsPathsInCommand(command) : command;
 
-                try
-                {
-                    await _process.WriteLineAsync(effectiveCommand, cancellationToken);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    throw new SmbSessionBrokenException(
-                        $"Failed writing command '{command}' to smbclient session for {contextPath}: {ex.Message}", ex);
-                }
+                // Unlike the one-shot "smbclient -c 'cmd1;cmd2'" invocation (which smbclient itself
+                // splits on ';'), the persistent session talks to smbclient's interactive "smb: \>"
+                // prompt, which only ever accepts a single command per line - it does not understand
+                // ';'-separated chaining. Callers (e.g. CanConnectAsync building "cd \"path\"; ls")
+                // still pass semicolon-joined commands, so split and feed each one to the prompt in
+                // turn, returning the output of the last command (mirroring the one-shot behavior).
+                var subCommands = effectiveCommand.Split(';', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(c => c.Trim())
+                    .Where(c => c.Length > 0)
+                    .ToList();
 
-                string output;
-                try
+                if (subCommands.Count == 0)
+                    subCommands.Add(effectiveCommand);
+
+                string output = string.Empty;
+                foreach (var subCommand in subCommands)
                 {
-                    output = await _process.ReadUntilAsync(PromptRegex, cancellationToken);
-                }
-                catch (IOException ex)
-                {
-                    throw new SmbSessionBrokenException(
-                        $"smbclient session for {contextPath} ended unexpectedly while running '{command}': {ex.Message}",
-                        ex);
+                    try
+                    {
+                        await _process.WriteLineAsync(subCommand, cancellationToken);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        throw new SmbSessionBrokenException(
+                            $"Failed writing command '{subCommand}' to smbclient session for {contextPath}: {ex.Message}", ex);
+                    }
+
+                    try
+                    {
+                        output = await _process.ReadUntilAsync(PromptRegex, cancellationToken);
+                    }
+                    catch (IOException ex)
+                    {
+                        throw new SmbSessionBrokenException(
+                            $"smbclient session for {contextPath} ended unexpectedly while running '{subCommand}': {ex.Message}",
+                            ex);
+                    }
+
+                    SmbClientErrorClassifier.ThrowIfKnownError(output, contextPath);
                 }
 
                 LastUsedUtc = DateTime.UtcNow;
-
-                SmbClientErrorClassifier.ThrowIfKnownError(output, contextPath);
 
                 return output;
             }
