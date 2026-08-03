@@ -10,6 +10,8 @@ A cross-platform .NET library for SMB/CIFS file operations. Works seamlessly on 
 - ✅ **Cross-Platform**: Windows (native UNC), Linux (smbclient), and macOS (smbclient)
 - ✅ **WSL Support**: Optionally use smbclient via WSL on Windows
 - ✅ **Persistent Session Pooling**: Optionally reuse a small pool of authenticated smbclient sessions per share, avoiding a full connect/negotiate/Kerberos-or-NTLM handshake on every call
+- ✅ **Directory Enumeration**: List subdirectories, not just files
+- ✅ **Extended File Metadata**: Retrieve creation/access/write/change times, attributes, and alternate data streams
 - ✅ **Dual Authentication**: Kerberos and username/password authentication
 - ✅ **Stream-Based API**: Efficient, memory-friendly file operations
 - ✅ **Async/Await**: Full async support with cancellation tokens
@@ -33,7 +35,7 @@ dotnet add package SmbSharp
 
 ### Package Reference
 ```xml
-<PackageReference Include="SmbSharp" Version="2.0.0-preview.5" />
+<PackageReference Include="SmbSharp" Version="2.0.0-preview.6" />
 ```
 
 ## Platform Requirements
@@ -246,6 +248,29 @@ foreach (var file in files)
     Console.WriteLine(file);
 }
 ```
+
+### List Subdirectories in a Directory
+```csharp
+var directories = await fileHandler.EnumerateDirectoriesAsync("//server/share/folder");
+foreach (var dir in directories)
+{
+    Console.WriteLine(dir);
+}
+```
+
+### Get Extended File Metadata
+```csharp
+var info = await fileHandler.GetFileInfoAsync("//server/share/folder", "file.txt");
+Console.WriteLine($"Created: {info.CreateTime}, Modified: {info.WriteTime}, Attributes: {info.Attributes}");
+foreach (var stream in info.Streams)
+{
+    Console.WriteLine($"Stream: {stream}");
+}
+```
+> **Note:** On Windows native UNC paths, `AlternateName` is null, `Streams` is empty, and `ChangeTime` falls back to
+> the write time, since .NET has no built-in equivalent for smbclient's `altname`/`change_time`/alternate-data-stream
+> reporting. On Linux/macOS (and Windows with WSL), this wraps smbclient's `allinfo` command and reports full details,
+> including alternate data streams such as `Zone.Identifier`.
 
 ### Read a File
 ```csharp
@@ -479,6 +504,8 @@ When health checks fail, error logs are automatically generated to help troubles
 | Method | Description |
 |--------|-------------|
 | `EnumerateFilesAsync(directory, cancellationToken)` | Lists all files in a directory |
+| `EnumerateDirectoriesAsync(directory, cancellationToken)` | Lists all subdirectories in a directory |
+| `GetFileInfoAsync(directory, fileName, cancellationToken)` | Retrieves extended metadata (timestamps, attributes, alternate data streams) for a file or subdirectory |
 | `ReadFileAsync(directory, fileName, cancellationToken)` | Opens a file for reading as a stream |
 | `WriteFileAsync(filePath, content, cancellationToken)` | Writes a string to a file |
 | `WriteFileAsync(filePath, stream, cancellationToken)` | Writes a stream to a file |

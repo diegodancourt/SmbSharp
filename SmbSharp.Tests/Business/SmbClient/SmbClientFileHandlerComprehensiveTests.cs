@@ -217,6 +217,166 @@ namespace SmbSharp.Tests.Business.SmbClient
     }
 
     /// <summary>
+    /// Tests for EnumerateDirectoriesAsync
+    /// </summary>
+    public class SmbClientFileHandlerEnumerateDirectoriesTests
+    {
+        [Fact]
+        public async Task EnumerateDirectoriesAsync_ValidOutput_ReturnsDirectoryNamesOnly()
+        {
+            // Arrange
+            var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
+            var mockProcess = new Mock<IProcessWrapper>();
+
+            var smbClientOutput = @"  file1.txt                          A    12345  Mon Jan 29 10:00:00 2026
+  subfolder1                         D        0  Tue Jan 30 11:00:00 2026
+  subfolder2                         D        0  Wed Jan 31 12:00:00 2026
+  .                                  D        0  Wed Jan 31 12:00:00 2026
+  ..                                 D        0  Wed Jan 31 12:00:00 2026";
+
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
+
+            var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
+
+            // Act
+            var result = await handler.EnumerateDirectoriesAsync("//server/share");
+
+            // Assert
+            var directories = result.ToList();
+            Assert.Equal(2, directories.Count);
+            Assert.Contains("subfolder1", directories);
+            Assert.Contains("subfolder2", directories);
+            Assert.DoesNotContain("file1.txt", directories);
+        }
+
+        [Fact]
+        public async Task EnumerateDirectoriesAsync_EmptyDirectory_ReturnsEmpty()
+        {
+            // Arrange
+            var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
+            var mockProcess = new Mock<IProcessWrapper>();
+
+            var smbClientOutput = @"  .                                  D        0  Wed Jan 31 12:00:00 2026
+  ..                                 D        0  Wed Jan 31 12:00:00 2026";
+
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
+
+            var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
+
+            // Act
+            var result = await handler.EnumerateDirectoriesAsync("//server/share");
+
+            // Assert
+            Assert.Empty(result);
+        }
+
+        [Fact]
+        public async Task EnumerateDirectoriesAsync_AccessDenied_ThrowsUnauthorizedAccessException()
+        {
+            // Arrange
+            var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
+            var mockProcess = new Mock<IProcessWrapper>();
+
+            mockProcess.SetupSmbClient(new ProcessResult
+                {
+                    ExitCode = 1,
+                    StandardError = "NT_STATUS_ACCESS_DENIED"
+                });
+
+            var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
+
+            // Act & Assert
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                handler.EnumerateDirectoriesAsync("//server/share"));
+        }
+    }
+
+    /// <summary>
+    /// Tests for GetFileInfoAsync (smbclient allinfo)
+    /// </summary>
+    public class SmbClientFileHandlerGetFileInfoTests
+    {
+        [Fact]
+        public async Task GetFileInfoAsync_ValidOutput_ParsesAllFields()
+        {
+            // Arrange
+            var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
+            var mockProcess = new Mock<IProcessWrapper>();
+
+            var allInfoOutput = @"altname: TEST~1.TXT
+create_time: Mon Jun 15 03:42:18 2020
+access_time: Mon Jun 15 03:42:18 2020
+write_time: Mon Jun 15 03:45:23 2020
+change_time: Thu Nov 12 21:14:36 2020
+attributes: A (20)
+stream: [::$DATA], 0 bytes
+stream: [:Zone.Identifier:$DATA], 26 bytes";
+
+            mockProcess.SetupSmbClient(new ProcessResult
+                {
+                    ExitCode = 0,
+                    StandardOutput = allInfoOutput
+                });
+
+            var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
+
+            // Act
+            var info = await handler.GetFileInfoAsync("//server/share/path", "test.txt");
+
+            // Assert
+            Assert.Equal("TEST~1.TXT", info.AlternateName);
+            Assert.Equal(new DateTime(2020, 6, 15, 3, 42, 18), info.CreateTime);
+            Assert.Equal(new DateTime(2020, 6, 15, 3, 45, 23), info.WriteTime);
+            Assert.Equal(new DateTime(2020, 11, 12, 21, 14, 36), info.ChangeTime);
+            Assert.Equal("A (20)", info.Attributes);
+            Assert.Equal(2, info.Streams.Count);
+            Assert.Contains(info.Streams, s => s.Contains("Zone.Identifier"));
+        }
+
+        [Fact]
+        public async Task GetFileInfoAsync_FileNotFound_ThrowsFileNotFoundException()
+        {
+            // Arrange
+            var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
+            var mockProcess = new Mock<IProcessWrapper>();
+
+            mockProcess.SetupSmbClient(new ProcessResult
+                {
+                    ExitCode = 1,
+                    StandardError = "NT_STATUS_OBJECT_NAME_NOT_FOUND"
+                });
+
+            var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
+
+            // Act & Assert
+            await Assert.ThrowsAsync<FileNotFoundException>(() =>
+                handler.GetFileInfoAsync("//server/share", "missing.txt"));
+        }
+
+        [Fact]
+        public async Task GetFileInfoAsync_UsesAllinfoCommand()
+        {
+            // Arrange
+            var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
+            var mockProcess = new Mock<IProcessWrapper>();
+
+            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = "attributes: A (20)" });
+
+            var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
+
+            // Act
+            await handler.GetFileInfoAsync("//server/share/path", "test.txt");
+
+            // Assert
+            mockProcess.Verify(x => x.ExecuteAsync(
+                "smbclient",
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("allinfo") || a.Contains("test.txt"))),
+                It.IsAny<IDictionary<string, string>>(),
+                It.IsAny<CancellationToken>()));
+        }
+    }
+
+    /// <summary>
     /// Tests for FileExistsAsync
     /// </summary>
     public class SmbClientFileHandlerFileExistsTests

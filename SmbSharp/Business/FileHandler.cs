@@ -7,6 +7,7 @@ using SmbSharp.Business.SmbClient;
 using SmbSharp.Business.SmbClient.Session;
 using SmbSharp.Enums;
 using SmbSharp.Infrastructure;
+using SmbSharp.Models;
 
 namespace SmbSharp.Business
 {
@@ -205,6 +206,85 @@ namespace SmbSharp.Business
                 return Directory.EnumerateFiles(directory)
                     .Select(Path.GetFileName)
                     .Where(f => !string.IsNullOrEmpty(f))!;
+            }, cancellationToken);
+        }
+
+        /// <inheritdoc/>
+        public async Task<IEnumerable<string>> EnumerateDirectoriesAsync(string directory,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(directory))
+                throw new ArgumentException("Directory path cannot be null or empty", nameof(directory));
+
+            if (_useSmbClient)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return await _smbClientFileHandler.EnumerateDirectoriesAsync(directory, cancellationToken);
+            }
+
+            // Use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
+            return await Task.Run(IEnumerable<string> () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (!Directory.Exists(directory))
+                {
+                    throw new DirectoryNotFoundException(
+                        $"The directory {directory} could not be found or I don't have access to it");
+                }
+
+                return Directory.EnumerateDirectories(directory)
+                    .Select(Path.GetFileName)
+                    .Where(f => !string.IsNullOrEmpty(f))!;
+            }, cancellationToken);
+        }
+
+        /// <inheritdoc/>
+        public async Task<SmbFileInfo> GetFileInfoAsync(string directory, string fileName,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(directory))
+                throw new ArgumentException("Directory path cannot be null or empty", nameof(directory));
+            if (string.IsNullOrWhiteSpace(fileName))
+                throw new ArgumentException("File name cannot be null or empty", nameof(fileName));
+
+            if (_useSmbClient)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return await _smbClientFileHandler.GetFileInfoAsync(directory, fileName, cancellationToken);
+            }
+
+            // Use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
+            return await Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var fullPath = Path.Combine(directory, fileName);
+                var isDirectory = Directory.Exists(fullPath);
+                if (!isDirectory && !File.Exists(fullPath))
+                {
+                    throw new FileNotFoundException(
+                        $"The file {fullPath} could not be found or I don't have access to it");
+                }
+
+                var attributes = isDirectory
+                    ? new DirectoryInfo(fullPath).Attributes
+                    : new System.IO.FileInfo(fullPath).Attributes;
+
+                // .NET has no built-in way to enumerate NTFS alternate data streams, and no distinct
+                // "change time" concept, so ChangeTime falls back to the write time.
+                return new SmbFileInfo
+                {
+                    AlternateName = null,
+                    CreateTime = isDirectory ? Directory.GetCreationTime(fullPath) : File.GetCreationTime(fullPath),
+                    AccessTime = isDirectory
+                        ? Directory.GetLastAccessTime(fullPath)
+                        : File.GetLastAccessTime(fullPath),
+                    WriteTime = isDirectory ? Directory.GetLastWriteTime(fullPath) : File.GetLastWriteTime(fullPath),
+                    ChangeTime = isDirectory ? Directory.GetLastWriteTime(fullPath) : File.GetLastWriteTime(fullPath),
+                    Attributes = attributes.ToString(),
+                    Streams = Array.Empty<string>()
+                };
             }, cancellationToken);
         }
 
