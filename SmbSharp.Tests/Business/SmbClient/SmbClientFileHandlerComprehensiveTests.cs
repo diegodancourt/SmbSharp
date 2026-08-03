@@ -1050,9 +1050,11 @@ stream: [:Zone.Identifier:$DATA], 26 bytes";
             // Assert
             Assert.True(result);
             Assert.NotEmpty(capturedArguments);
-            // The command is now passed as a separate argument
-            Assert.Contains(capturedArguments, arg => arg.Contains("cd \"path/to/directory\""));
-            Assert.Contains(capturedArguments, arg => arg.Contains("ls"));
+            // The command is now passed as a separate argument. It must be an absolute path
+            // (leading "/") and must NOT use "cd" - "cd" would permanently change the working
+            // directory of a pooled/persistent session for future unrelated commands.
+            Assert.Contains(capturedArguments, arg => arg.Contains("ls \"/path/to/directory\""));
+            Assert.DoesNotContain(capturedArguments, arg => arg.Contains("cd "));
         }
 
         [Fact]
@@ -1077,9 +1079,10 @@ stream: [:Zone.Identifier:$DATA], 26 bytes";
             // Assert
             Assert.True(result);
             Assert.NotEmpty(capturedArguments);
-            // Path should be converted to forward slashes for smbclient
-            Assert.Contains(capturedArguments, arg => arg.Contains("cd \"path/to/directory\""));
-            Assert.Contains(capturedArguments, arg => arg.Contains("ls"));
+            // Path should be converted to forward slashes for smbclient, and remain absolute
+            // (leading "/") rather than using "cd", regardless of the input path's separators.
+            Assert.Contains(capturedArguments, arg => arg.Contains("ls \"/path/to/directory\""));
+            Assert.DoesNotContain(capturedArguments, arg => arg.Contains("cd "));
         }
     }
 

@@ -35,7 +35,7 @@ dotnet add package SmbSharp
 
 ### Package Reference
 ```xml
-<PackageReference Include="SmbSharp" Version="2.0.0-preview.8" />
+<PackageReference Include="SmbSharp" Version="2.0.0" />
 ```
 
 ## Platform Requirements
