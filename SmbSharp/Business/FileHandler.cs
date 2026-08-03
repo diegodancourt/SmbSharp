@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SmbSharp.Business.Interfaces;
 using SmbSharp.Business.SmbClient;
+using SmbSharp.Business.SmbClient.Session;
 using SmbSharp.Enums;
 using SmbSharp.Infrastructure;
 
@@ -26,18 +27,26 @@ namespace SmbSharp.Business
         /// </summary>
         /// <param name="loggerFactory">Optional logger factory for debug output. Pass null to disable logging.</param>
         /// <param name="useWsl">When true on Windows, uses smbclient via WSL instead of native UNC paths. Ignored on Linux/macOS.</param>
+        /// <param name="useSessionPool">When true, keeps a small pool of persistent, authenticated smbclient
+        /// sessions open per share instead of re-authenticating on every call. Strongly recommended.</param>
+        /// <param name="sessionPoolSize">Number of persistent sessions kept per share when useSessionPool is true.</param>
+        /// <param name="sessionIdleTimeout">How long an idle session may sit before disposal when useSessionPool is true.</param>
         /// <returns>A new FileHandler instance</returns>
         /// <exception cref="PlatformNotSupportedException">Thrown when running on unsupported platform</exception>
         /// <exception cref="InvalidOperationException">Thrown when smbclient is not available on Linux/macOS (or via WSL when useWsl is true)</exception>
-        public static FileHandler CreateWithKerberos(ILoggerFactory? loggerFactory = null, bool useWsl = false)
+        public static FileHandler CreateWithKerberos(ILoggerFactory? loggerFactory = null, bool useWsl = false,
+            bool useSessionPool = false, int sessionPoolSize = 3, TimeSpan? sessionIdleTimeout = null)
         {
             loggerFactory ??= new NullLoggerFactory();
             var processWrapper = new ProcessWrapper(loggerFactory.CreateLogger<ProcessWrapper>());
+            var sessionPool = CreateSessionPoolIfEnabled(loggerFactory, useSessionPool, useKerberos: true,
+                username: null, password: null, domain: null, useWsl, sessionPoolSize, sessionIdleTimeout);
             var smbClientHandler = new SmbClientFileHandler(
                 loggerFactory.CreateLogger<SmbClientFileHandler>(),
                 processWrapper,
                 useKerberos: true,
-                useWsl: useWsl);
+                useWsl: useWsl,
+                sessionPool: sessionPool);
 
             return new FileHandler(loggerFactory.CreateLogger<FileHandler>(), smbClientHandler, useWsl);
         }
@@ -52,12 +61,17 @@ namespace SmbSharp.Business
         /// <param name="domain">Optional domain for authentication</param>
         /// <param name="loggerFactory">Optional logger factory for debug output. Pass null to disable logging.</param>
         /// <param name="useWsl">When true on Windows, uses smbclient via WSL instead of native UNC paths. Ignored on Linux/macOS.</param>
+        /// <param name="useSessionPool">When true, keeps a small pool of persistent, authenticated smbclient
+        /// sessions open per share instead of re-authenticating on every call.</param>
+        /// <param name="sessionPoolSize">Number of persistent sessions kept per share when useSessionPool is true.</param>
+        /// <param name="sessionIdleTimeout">How long an idle session may sit before disposal when useSessionPool is true.</param>
         /// <returns>A new FileHandler instance</returns>
         /// <exception cref="ArgumentException">Thrown when username or password is null or empty</exception>
         /// <exception cref="PlatformNotSupportedException">Thrown when running on unsupported platform</exception>
         /// <exception cref="InvalidOperationException">Thrown when smbclient is not available on Linux/macOS (or via WSL when useWsl is true)</exception>
         public static FileHandler CreateWithCredentials(string username, string password, string? domain = null,
-            ILoggerFactory? loggerFactory = null, bool useWsl = false)
+            ILoggerFactory? loggerFactory = null, bool useWsl = false, bool useSessionPool = false,
+            int sessionPoolSize = 3, TimeSpan? sessionIdleTimeout = null)
         {
             if (string.IsNullOrWhiteSpace(username))
                 throw new ArgumentException("Username cannot be null or empty", nameof(username));
@@ -66,6 +80,8 @@ namespace SmbSharp.Business
 
             loggerFactory ??= new NullLoggerFactory();
             var processWrapper = new ProcessWrapper(loggerFactory.CreateLogger<ProcessWrapper>());
+            var sessionPool = CreateSessionPoolIfEnabled(loggerFactory, useSessionPool, useKerberos: false,
+                username, password, domain, useWsl, sessionPoolSize, sessionIdleTimeout);
             var smbClientHandler = new SmbClientFileHandler(
                 loggerFactory.CreateLogger<SmbClientFileHandler>(),
                 processWrapper,
@@ -73,10 +89,24 @@ namespace SmbSharp.Business
                 username,
                 password,
                 domain,
-                useWsl: useWsl);
+                useWsl: useWsl,
+                sessionPool: sessionPool);
 
             return new FileHandler(loggerFactory.CreateLogger<FileHandler>(), smbClientHandler, useWsl);
         }
+
+        private static ISmbClientSessionPool? CreateSessionPoolIfEnabled(ILoggerFactory loggerFactory,
+            bool useSessionPool, bool useKerberos, string? username, string? password, string? domain, bool useWsl,
+            int sessionPoolSize, TimeSpan? sessionIdleTimeout)
+        {
+            if (!useSessionPool)
+                return null;
+
+            var processFactory = new InteractiveProcessFactory(loggerFactory);
+            return new SmbClientSessionPool(loggerFactory, processFactory, useKerberos, username, password, domain,
+                useWsl, sessionPoolSize, sessionIdleTimeout);
+        }
+
 
         /// <summary>
         /// Initializes a new instance of FileHandler.
