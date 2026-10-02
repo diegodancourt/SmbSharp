@@ -21,6 +21,13 @@ A cross-platform .NET library for SMB/CIFS file operations. Works seamlessly on 
 - ✅ **Secure**: Passwords passed via environment variables, not command-line arguments
 - ✅ **Well-Documented**: Comprehensive XML documentation with IntelliSense support
 
+## What's New in 2.0.1
+
+Fixes slow username/password logins and intermittent SMB session initialization failures:
+explicit Kerberos opt-out for credentials, bounded initialization with retry/backoff,
+cleanup of failed sessions, safe stale-slot recovery, and reuse of idle authenticated sessions.
+Existing target frameworks and public APIs are unchanged.
+
 ## Installation
 
 ### NuGet Package Manager
@@ -35,7 +42,7 @@ dotnet add package SmbSharp
 
 ### Package Reference
 ```xml
-<PackageReference Include="SmbSharp" Version="2.0.0" />
+<PackageReference Include="SmbSharp" Version="2.0.1" />
 ```
 
 ## Platform Requirements
@@ -362,7 +369,13 @@ klist
 ```
 
 ### Username/Password Authentication
-Credentials are securely passed to smbclient via environment variables, not command-line arguments, preventing exposure in process listings.
+Credentials are passed to smbclient via a temporary credentials file (`-A`), not command-line
+arguments. SmbSharp attempts to restrict the file permissions to owner-only access and removes
+the file when the one-shot operation or persistent session is disposed.
+
+On the smbclient path, username/password authentication explicitly disables Kerberos
+(`--use-kerberos=off`) to avoid Kerberos discovery delays before NTLM fallback. Explicit
+Kerberos authentication continues to use `--use-kerberos=required`.
 
 ## Persistent Session Pooling
 
@@ -375,8 +388,15 @@ Setting `UseSessionPool = true` (or passing `useSessionPool: true` to `FileHandl
 `CreateWithCredentials`) keeps a small pool of long-lived, already-authenticated interactive
 `smbclient` sessions open per `(server, share)` pair, and reuses them across calls:
 
-- Concurrent calls to the same share are spread round-robin across `SessionPoolSize` sessions
-  instead of queuing behind a single connection.
+- Sequential calls prefer an idle, live session. Concurrent calls use additional pool slots
+  when existing sessions are busy, up to `SessionPoolSize` sessions per share.
+- Each session initialization has a 30-second timeout. Broken connections and initialization
+  timeouts are retried up to three total attempts with exponential backoff and jitter, starting
+  at a one-second delay. Recognized authentication, permission, and missing-path errors are not
+  retried. Failed initialization attempts dispose the process and temporary credentials file
+  and leave the pool slot available for subsequent calls.
+- Successful session establishment is logged at Information level with its duration in
+  milliseconds.
 - If a session dies mid-operation (e.g. network blip, idle server-side timeout), it is
   transparently recreated and the operation is retried once.
 - Idle sessions are evicted and disposed after `SessionIdleTimeout` to avoid holding stale

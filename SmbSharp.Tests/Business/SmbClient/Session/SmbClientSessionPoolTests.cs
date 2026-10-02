@@ -36,7 +36,7 @@ namespace SmbSharp.Tests.Business.SmbClient.Session
         }
 
         [Fact]
-        public async Task ExecuteAsync_DistributesAcrossPoolSlots_WhenPoolSizeIsGreaterThanOne()
+        public async Task ExecuteAsync_SequentialCalls_ReuseIdleLiveSession_WhenPoolSizeIsGreaterThanOne()
         {
             var factoryMock = new Mock<IInteractiveProcessFactory>();
             factoryMock.Setup(f => f.Create()).Returns(() => CreateAliveProcessMock().Object);
@@ -49,7 +49,9 @@ namespace SmbSharp.Tests.Business.SmbClient.Session
                 await pool.ExecuteAsync("server1", "share1", "ls", "//server1/share1");
             }
 
-            factoryMock.Verify(f => f.Create(), Times.Exactly(3));
+            // Sequential calls never contend, so the already-authenticated session is reused instead of
+            // paying a fresh login on every slot.
+            factoryMock.Verify(f => f.Create(), Times.Once);
         }
 
         [Fact]

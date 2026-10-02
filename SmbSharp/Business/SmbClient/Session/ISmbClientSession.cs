@@ -13,6 +13,11 @@ namespace SmbSharp.Business.SmbClient.Session
         bool IsAlive { get; }
 
         /// <summary>
+        /// True while a command is currently executing on this session.
+        /// </summary>
+        bool IsBusy { get; }
+
+        /// <summary>
         /// UTC timestamp of the last time this session successfully executed a command (or was created).
         /// </summary>
         DateTime LastUsedUtc { get; }

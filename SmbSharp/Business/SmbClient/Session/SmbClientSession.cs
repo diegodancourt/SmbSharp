@@ -27,15 +27,18 @@ namespace SmbSharp.Business.SmbClient.Session
         private readonly string? _password;
         private readonly string? _domain;
         private readonly SemaphoreSlim _executionLock = new(1, 1);
+        private readonly TimeSpan _initTimeout;
 
         private IInteractiveProcess? _process;
         private string? _credentialsFilePath;
         private bool _initialized;
+        private volatile bool _disposed;
 
         public SmbClientSession(ILogger logger, IInteractiveProcessFactory processFactory, string server,
             string share, bool useKerberos, string? username = null, string? password = null,
-            string? domain = null, bool useWsl = false)
+            string? domain = null, bool useWsl = false, TimeSpan? initTimeout = null)
         {
+            _initTimeout = initTimeout ?? TimeSpan.FromSeconds(30);
             _logger = logger;
             _processFactory = processFactory;
             _server = server;
@@ -47,7 +50,26 @@ namespace SmbSharp.Business.SmbClient.Session
             _useWsl = useWsl;
         }
 
-        public bool IsAlive => _initialized && _process is { HasExited: false };
+        public bool IsAlive
+        {
+            get
+            {
+                if (_disposed || !_initialized || _process == null)
+                    return false;
+
+                try
+                {
+                    return !_process.HasExited;
+                }
+                catch (InvalidOperationException)
+                {
+                    // Process.HasExited throws once the underlying Process has been disposed.
+                    return false;
+                }
+            }
+        }
+
+        public bool IsBusy => !_disposed && _executionLock.CurrentCount == 0;
 
         public DateTime LastUsedUtc { get; private set; } = DateTime.UtcNow;
 
@@ -59,10 +81,29 @@ namespace SmbSharp.Business.SmbClient.Session
             _process.Start(executable, argumentList);
 
             var contextPath = $"//{_server}/{_share}";
+            var stopwatch = Stopwatch.StartNew();
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(_initTimeout);
+            // Reads from a child-process pipe aren't reliably cancellable on every platform, so on
+            // timeout also kill the process: that closes the pipe and unblocks the pending read.
+            var process = _process;
+            using var killOnTimeout = timeoutCts.Token.Register(() =>
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                    process.Kill();
+            });
+
             string banner;
             try
             {
-                banner = await _process.ReadUntilAsync(PromptRegex, cancellationToken);
+                banner = await _process.ReadUntilAsync(PromptRegex, timeoutCts.Token);
+            }
+            catch (Exception ex) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested &&
+                                       ex is OperationCanceledException or IOException)
+            {
+                throw new SmbSessionBrokenException(
+                    $"Timed out after {_initTimeout.TotalSeconds:0}s establishing smbclient session for {contextPath}.", ex);
             }
             catch (IOException ex)
             {
@@ -70,7 +111,7 @@ namespace SmbSharp.Business.SmbClient.Session
                 // otherwise fall back to a generic broken-session exception.
                 SmbClientErrorClassifier.ThrowIfKnownError(ex.Message, contextPath);
                 throw new SmbSessionBrokenException(
-                    $"Failed to establish smbclient session for {contextPath}: {ex.Message}", ex);
+                    $"Failed to establish smbclient session for {contextPath} after {stopwatch.ElapsedMilliseconds}ms: {ex.Message}", ex);
             }
 
             SmbClientErrorClassifier.ThrowIfKnownError(banner, contextPath);
@@ -78,7 +119,8 @@ namespace SmbSharp.Business.SmbClient.Session
             _initialized = true;
             LastUsedUtc = DateTime.UtcNow;
 
-            _logger.LogDebug("Established persistent smbclient session for {ContextPath}", contextPath);
+            _logger.LogInformation("Established persistent smbclient session for {ContextPath} in {ElapsedMs}ms",
+                contextPath, stopwatch.ElapsedMilliseconds);
         }
 
         public async Task<string> ExecuteAsync(string command, string contextPath,
@@ -87,6 +129,12 @@ namespace SmbSharp.Business.SmbClient.Session
             if (_process == null || !_initialized)
             {
                 throw new InvalidOperationException("Session has not been initialized.");
+            }
+
+            if (_disposed)
+            {
+                throw new SmbSessionBrokenException(
+                    $"Cannot run command '{command}' because the smbclient session for {contextPath} has been disposed.");
             }
 
             await _executionLock.WaitAsync(cancellationToken);
@@ -172,6 +220,12 @@ namespace SmbSharp.Business.SmbClient.Session
             }
             else
             {
+                // Without this, smbclient (Samba >= 4.15 defaults to "client use kerberos = desired")
+                // still attempts Kerberos first - DC discovery + KDC round-trips - before falling back
+                // to NTLM. When the KDC is slow/unreachable this stalls session setup long enough for
+                // the server to drop the connection (NT_STATUS_CONNECTION_DISCONNECTED).
+                smbclientArgs.Add("--use-kerberos=off");
+
                 var username = string.IsNullOrEmpty(_domain)
                     ? _username ?? string.Empty
                     : $"{_domain}\\{_username}";
@@ -243,6 +297,10 @@ namespace SmbSharp.Business.SmbClient.Session
 
         public void Dispose()
         {
+            if (_disposed)
+                return;
+            _disposed = true;
+
             _process?.Dispose();
 
             if (_credentialsFilePath != null)

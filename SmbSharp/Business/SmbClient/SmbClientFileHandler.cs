@@ -509,6 +509,9 @@ namespace SmbSharp.Business.SmbClient
                 }
                 else
                 {
+                    // Skip smbclient's default Kerberos-first attempt (see SmbClientSession for details).
+                    argumentList.Add("--use-kerberos=off");
+
                     // Use username/password authentication via credentials file
                     var username = string.IsNullOrEmpty(_domain)
                         ? _username ?? string.Empty
