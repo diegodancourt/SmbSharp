@@ -21,11 +21,19 @@ A cross-platform .NET library for SMB/CIFS file operations. Works seamlessly on 
 - ✅ **Secure**: Passwords passed via environment variables, not command-line arguments
 - ✅ **Well-Documented**: Comprehensive XML documentation with IntelliSense support
 
-## What's New in 2.0.1
+## What's New in 2.1.0
 
-Fixes slow username/password logins and intermittent SMB session initialization failures:
-explicit Kerberos opt-out for credentials, bounded initialization with retry/backoff,
-cleanup of failed sessions, safe stale-slot recovery, and reuse of idle authenticated sessions.
+Security and reliability release:
+
+- **Security**: remote paths and file names are validated and quoted to prevent smbclient command
+  injection; passwords are passed via the child process environment instead of credentials files.
+- **Session pooling**: sessions are invalidated on cancellation or timeout, commands have a timeout
+  and are never replayed after dispatch, and disposal and idle-eviction races are fixed.
+  Session initialization is bounded with retry/backoff, and idle authenticated sessions are reused.
+- **Moves**: same-share moves use a server-side rename; moves never overwrite an existing destination.
+- **WSL / macOS**: new `WslDistribution` option and BSD/macOS `script` support.
+- **Username/password logins**: Kerberos is explicitly disabled to avoid slow discovery delays.
+
 Existing target frameworks and public APIs are unchanged.
 
 ## Installation
@@ -42,7 +50,7 @@ dotnet add package SmbSharp
 
 ### Package Reference
 ```xml
-<PackageReference Include="SmbSharp" Version="2.0.1" />
+<PackageReference Include="SmbSharp" Version="2.1.0" />
 ```
 
 ## Platform Requirements
