@@ -36,7 +36,7 @@ namespace SmbSharp.Business.SmbClient
         public static string ConvertWindowsPathsInCommand(string command)
         {
             // Match Windows absolute paths like C:\path or D:/path within the command
-            return Regex.Replace(command, @"([A-Za-z]):([\\/])([^\s""]*)", match =>
+            return Regex.Replace(command, @"([A-Za-z]):([\\/])([^""]*)", match =>
             {
                 var drive = char.ToLowerInvariant(match.Groups[1].Value[0]);
                 var rest = match.Groups[3].Value.Replace('\\', '/');

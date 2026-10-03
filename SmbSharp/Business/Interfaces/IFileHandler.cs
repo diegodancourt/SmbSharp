@@ -6,6 +6,10 @@ namespace SmbSharp.Business.Interfaces
     /// Provides an interface for file operations on SMB/CIFS shares across different platforms.
     /// Supports both Kerberos authentication and username/password authentication.
     /// </summary>
+    /// <remarks>
+    /// Cancellation tokens are honored before native filesystem operations start, but an in-progress
+    /// blocking UNC filesystem call cannot be interrupted by .NET and may continue until the OS call returns.
+    /// </remarks>
     public interface IFileHandler
     {
         /// <summary>
@@ -150,20 +154,20 @@ namespace SmbSharp.Business.Interfaces
         /// <strong>Windows:</strong> Uses File.Move directly - efficient, atomic operation that just updates file metadata.
         /// </para>
         /// <para>
-        /// <strong>Linux:</strong> Performs a copy-then-delete operation since smbclient has no native move command.
+        /// <strong>Linux:</strong> Uses smbclient's server-side rename for same-share moves. Cross-share moves
+        /// copy and then delete; if deletion fails, both copies may remain and the source is not rolled back.
         /// This means:
         /// - The file is downloaded to a temporary location
         /// - Then uploaded to the destination
         /// - Then deleted from the source
         /// - This requires 2x the file size in temporary disk space
         /// - Network transfer time is 2x (download + upload)
-        /// - The operation IS atomic with retry logic - if source deletion fails after copying, it retries once, then rolls back the destination if retry fails
+        /// - Cross-share moves are not atomic and may leave both source and destination when source deletion fails
         /// - For large files, this can be slow and resource-intensive
         /// </para>
         /// <para>
-        /// <strong>Atomicity Guarantee:</strong> The operation ensures the file exists in only one location. If the source
-        /// deletion fails, a retry is attempted after a brief delay. If both attempts fail, the destination file is
-        /// automatically deleted to rollback the operation and maintain consistency.
+        /// <strong>Destination Safety:</strong> A cross-share move uses create-new semantics and never removes the
+        /// destination as rollback. This favors retaining data over guaranteeing a single copy after a partial failure.
         /// </para>
         /// <para>
         /// <strong>Recommendation:</strong> If you're moving large files on Linux, consider using alternative approaches

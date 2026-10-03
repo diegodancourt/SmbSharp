@@ -295,6 +295,30 @@ namespace SmbSharp.Tests.Extensions
             // Assert
             Assert.Same(services, result);
         }
+
+        [Fact]
+        public void AddSmbSharp_WithServiceProviderAndSessionPool_UsesResolvedOptionsWithoutSharedScopeState()
+        {
+            var configurationCalls = 0;
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSmbSharp((_, options) =>
+            {
+                configurationCalls++;
+                options.UseSessionPool = true;
+                options.SessionCommandTimeout = TimeSpan.FromSeconds(20);
+                options.WslDistribution = "custom-distro";
+            });
+
+            using var provider = services.BuildServiceProvider();
+            using var scope = provider.CreateScope();
+            var handler = scope.ServiceProvider.GetRequiredService<IFileHandler>();
+            var sessionPool = provider.GetRequiredService<SmbSharp.Business.SmbClient.Session.ISmbClientSessionPool>();
+
+            Assert.NotNull(handler);
+            Assert.NotNull(sessionPool);
+            Assert.Equal(1, configurationCalls);
+        }
     }
 
     /// <summary>

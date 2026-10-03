@@ -5,6 +5,7 @@ using SmbSharp.Business;
 using SmbSharp.Business.SmbClient;
 using SmbSharp.Enums;
 using SmbSharp.Infrastructure;
+using SmbSharp.Tests.Util;
 
 namespace SmbSharp.Tests.Business
 {
@@ -20,14 +21,12 @@ namespace SmbSharp.Tests.Business
     {
         private readonly string _testDirectory;
         private FileHandler? _handler;
-        private bool _smbClientAvailable;
 
         public FileHandlerLinuxIntegrationTests()
         {
             // Create a temporary test directory
             _testDirectory = Path.Combine(Path.GetTempPath(), $"SmbSharpTest_{Guid.NewGuid()}");
             Directory.CreateDirectory(_testDirectory);
-            _smbClientAvailable = false;
         }
 
         public void Dispose()
@@ -66,12 +65,10 @@ namespace SmbSharp.Tests.Business
                     var smbClientFileHandler = new SmbClientFileHandler(smbClientLogger, processWrapper, useKerberos: true);
 
                     _handler = new FileHandler(fileHandlerLogger, smbClientFileHandler);
-                    _smbClientAvailable = true;
                 }
                 catch (InvalidOperationException)
                 {
                     // smbclient is not available - tests will be skipped
-                    _smbClientAvailable = false;
                     return null;
                 }
                 catch (PlatformNotSupportedException)
@@ -84,14 +81,9 @@ namespace SmbSharp.Tests.Business
             return _handler;
         }
 
-        [Fact]
+        [LinuxFact]
         public void Constructor_OnLinux_WithSmbClientAvailable_Succeeds()
         {
-            if (!OperatingSystem.IsLinux())
-            {
-                return; // Skip on non-Linux
-            }
-
             // Arrange & Act
             FileHandler? handler = null;
             Exception? exception = null;
@@ -123,14 +115,9 @@ namespace SmbSharp.Tests.Business
             }
         }
 
-        [Fact]
+        [LinuxFact]
         public void Constructor_OnLinux_RequiresSmbClient()
         {
-            if (!OperatingSystem.IsLinux())
-            {
-                return; // Skip on non-Linux
-            }
-
             // This test verifies that the constructor checks for smbclient
             // It will either succeed (if smbclient is installed) or throw InvalidOperationException
 
@@ -151,20 +138,11 @@ namespace SmbSharp.Tests.Business
             }
         }
 
-        [Fact]
+        [LinuxSmbClientFact]
         public async Task WriteFileAsync_OnLinux_ExecutesRealSmbClientCommand()
         {
-            if (!OperatingSystem.IsLinux())
-            {
-                return; // Skip on non-Linux
-            }
-
-            var handler = CreateHandler();
-            if (handler == null || !_smbClientAvailable)
-            {
-                // smbclient not available, skip test
-                return;
-            }
+            var handler = CreateHandler() ??
+                          throw new InvalidOperationException("smbclient is present but could not be initialized.");
 
             // Arrange
             var testFile = Path.Combine(_testDirectory, "test.txt");
@@ -194,20 +172,11 @@ namespace SmbSharp.Tests.Business
             }
         }
 
-        [Fact]
+        [LinuxSmbClientFact]
         public async Task EnumerateFilesAsync_OnLinux_ExecutesRealSmbClientCommand()
         {
-            if (!OperatingSystem.IsLinux())
-            {
-                return; // Skip on non-Linux
-            }
-
-            var handler = CreateHandler();
-            if (handler == null || !_smbClientAvailable)
-            {
-                // smbclient not available, skip test
-                return;
-            }
+            var handler = CreateHandler() ??
+                          throw new InvalidOperationException("smbclient is present but could not be initialized.");
 
             // Act & Assert
             // Note: This will try to use smbclient to enumerate files
@@ -233,20 +202,11 @@ namespace SmbSharp.Tests.Business
             }
         }
 
-        [Fact]
+        [LinuxSmbClientFact]
         public async Task DeleteFileAsync_OnLinux_ExecutesRealSmbClientCommand()
         {
-            if (!OperatingSystem.IsLinux())
-            {
-                return; // Skip on non-Linux
-            }
-
-            var handler = CreateHandler();
-            if (handler == null || !_smbClientAvailable)
-            {
-                // smbclient not available, skip test
-                return;
-            }
+            var handler = CreateHandler() ??
+                          throw new InvalidOperationException("smbclient is present but could not be initialized.");
 
             // Arrange
             var testFile = Path.Combine(_testDirectory, "todelete.txt");
@@ -270,20 +230,11 @@ namespace SmbSharp.Tests.Business
             }
         }
 
-        [Fact]
+        [LinuxSmbClientFact]
         public async Task CreateDirectoryAsync_OnLinux_ExecutesRealSmbClientCommand()
         {
-            if (!OperatingSystem.IsLinux())
-            {
-                return; // Skip on non-Linux
-            }
-
-            var handler = CreateHandler();
-            if (handler == null || !_smbClientAvailable)
-            {
-                // smbclient not available, skip test
-                return;
-            }
+            var handler = CreateHandler() ??
+                          throw new InvalidOperationException("smbclient is present but could not be initialized.");
 
             // Arrange
             var newDir = Path.Combine(_testDirectory, "newsubdir");
@@ -307,20 +258,11 @@ namespace SmbSharp.Tests.Business
             }
         }
 
-        [Fact]
+        [LinuxSmbClientFact]
         public async Task MoveFileAsync_OnLinux_ExecutesRealSmbClientCommands()
         {
-            if (!OperatingSystem.IsLinux())
-            {
-                return; // Skip on non-Linux
-            }
-
-            var handler = CreateHandler();
-            if (handler == null || !_smbClientAvailable)
-            {
-                // smbclient not available, skip test
-                return;
-            }
+            var handler = CreateHandler() ??
+                          throw new InvalidOperationException("smbclient is present but could not be initialized.");
 
             // Arrange
             var sourceFile = Path.Combine(_testDirectory, "source.txt");
@@ -346,20 +288,11 @@ namespace SmbSharp.Tests.Business
             }
         }
 
-        [Fact]
+        [LinuxSmbClientFact]
         public async Task CanConnectAsync_OnLinux_ExecutesRealSmbClientCommand()
         {
-            if (!OperatingSystem.IsLinux())
-            {
-                return; // Skip on non-Linux
-            }
-
-            var handler = CreateHandler();
-            if (handler == null || !_smbClientAvailable)
-            {
-                // smbclient not available, skip test
-                return;
-            }
+            var handler = CreateHandler() ??
+                          throw new InvalidOperationException("smbclient is present but could not be initialized.");
 
             // Act
             // Test with a local path - will attempt to connect via smbclient
@@ -371,20 +304,11 @@ namespace SmbSharp.Tests.Business
             Assert.True(result == true || result == false);
         }
 
-        [Fact]
+        [LinuxSmbClientFact]
         public async Task WriteAndReadFile_OnLinux_RealSmbClientRoundTrip()
         {
-            if (!OperatingSystem.IsLinux())
-            {
-                return; // Skip on non-Linux
-            }
-
-            var handler = CreateHandler();
-            if (handler == null || !_smbClientAvailable)
-            {
-                // smbclient not available, skip test
-                return;
-            }
+            var handler = CreateHandler() ??
+                          throw new InvalidOperationException("smbclient is present but could not be initialized.");
 
             // This test attempts a full write-read cycle
             // It requires a working SMB configuration

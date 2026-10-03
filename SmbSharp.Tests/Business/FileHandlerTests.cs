@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using SmbSharp.Business;
 using SmbSharp.Business.Interfaces;
+using SmbSharp.Business.SmbClient;
 using SmbSharp.Tests.Util;
 
 namespace SmbSharp.Tests.Business
@@ -27,15 +28,9 @@ namespace SmbSharp.Tests.Business
             }
         }
 
-        [Fact]
+        [LinuxFact]
         public void Constructor_OnLinux_SmbClientNotAvailable_ShouldThrowInvalidOperationException()
         {
-            // This test only runs on Linux where we can control smbclient availability
-            if (!OperatingSystem.IsLinux())
-            {
-                return; // Skip on non-Linux platforms
-            }
-
             // Arrange
             var mockLogger = new Mock<ILogger<FileHandler>>();
             var mockSmbClient = new Mock<ISmbClientFileHandler>();
@@ -54,16 +49,9 @@ namespace SmbSharp.Tests.Business
             mockLogger.VerifyLog(LogLevel.Error, "smbclient is not installed or not available in PATH");
         }
 
-        [Fact]
+        [UnsupportedPlatformFact]
         public void Constructor_OnUnsupportedPlatform_ShouldThrowPlatformNotSupportedException()
         {
-            // This test verifies that the error handling works correctly
-            // On macOS, FreeBSD, or other unsupported platforms, this should throw
-            if (OperatingSystem.IsWindows() || OperatingSystem.IsLinux())
-            {
-                return; // Skip on supported platforms
-            }
-
             // Arrange
             var mockLogger = new Mock<ILogger<FileHandler>>();
             var mockSmbClient = new Mock<ISmbClientFileHandler>();
@@ -73,21 +61,15 @@ namespace SmbSharp.Tests.Business
             var exception = Assert.Throws<PlatformNotSupportedException>(() =>
                 new FileHandler(mockLogger.Object, mockSmbClient.Object));
 
-            Assert.Contains("SmbSharp only supports Windows and Linux", exception.Message);
+            Assert.Contains("SmbSharp only supports Windows, Linux, and macOS", exception.Message);
 
             // Verify error was logged
             mockLogger.VerifyLog(LogLevel.Error, "Unsupported platform");
         }
 
-        [Fact]
+        [LinuxFact]
         public void Constructor_OnLinux_SmbClientAvailable_ShouldSucceed()
         {
-            // This test verifies Linux-specific initialization
-            if (!OperatingSystem.IsLinux())
-            {
-                return; // Skip on non-Linux platforms
-            }
-
             // Arrange
             var mockLogger = new Mock<ILogger<FileHandler>>();
             var mockSmbClient = new Mock<ISmbClientFileHandler>();
@@ -103,15 +85,9 @@ namespace SmbSharp.Tests.Business
             mockSmbClient.Verify(x => x.IsSmbClientAvailable(), Times.Once);
         }
 
-        [Fact]
+        [WindowsFact]
         public void Constructor_OnWindows_DoesNotCheckSmbClient()
         {
-            // This test verifies that on Windows (without useWsl), smbclient availability is not checked
-            if (!OperatingSystem.IsWindows())
-            {
-                return; // Skip on non-Windows platforms
-            }
-
             // Arrange
             var mockLogger = new Mock<ILogger<FileHandler>>();
             var mockSmbClient = new Mock<ISmbClientFileHandler>();
@@ -698,8 +674,8 @@ namespace SmbSharp.Tests.Business
 
             mockSmbClient
                 .Setup(x => x.WriteFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Stream>(),
-                    It.IsAny<CancellationToken>()))
-                .Callback<string, string, Stream, CancellationToken>((dir, _, _, _) => capturedDestDir = dir)
+                    It.IsAny<SmbSharp.Enums.FileWriteMode>(), It.IsAny<CancellationToken>()))
+                .Callback<string, string, Stream, SmbSharp.Enums.FileWriteMode, CancellationToken>((dir, _, _, _, _) => capturedDestDir = dir)
                 .ReturnsAsync(true);
 
             mockSmbClient
@@ -716,6 +692,89 @@ namespace SmbSharp.Tests.Business
             // Assert
             Assert.Equal("//server/share/folder", capturedSourceDir);
             Assert.Equal("//server/share/folder", capturedDestDir);
+        }
+
+        [Fact]
+        public async Task MoveFileAsync_CrossShareSourceDeleteFailure_DoesNotDeleteDestination()
+        {
+            var logger = new Mock<ILogger<FileHandler>>();
+            var smbClient = new Mock<ISmbClientFileHandler>();
+            smbClient.Setup(x => x.IsSmbClientAvailable()).Returns(true);
+            smbClient.Setup(x => x.GetFileStreamAsync("//server/share1", "source.txt", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new MemoryStream(new byte[] { 1, 2, 3 }));
+            smbClient.Setup(x => x.WriteFileAsync("//server/share2", "destination.txt", It.IsAny<Stream>(),
+                    SmbSharp.Enums.FileWriteMode.CreateNew, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
+            smbClient.Setup(x => x.DeleteFileAsync("//server/share1", "source.txt", It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new IOException("source removal failed"));
+
+            var handler = new FileHandler(logger.Object, smbClient.Object, useWsl: true);
+
+            await Assert.ThrowsAsync<IOException>(() =>
+                handler.MoveFileAsync("//server/share1/source.txt", "//server/share2/destination.txt"));
+
+            smbClient.Verify(x => x.WriteFileAsync("//server/share2", "destination.txt", It.IsAny<Stream>(),
+                SmbSharp.Enums.FileWriteMode.CreateNew, It.IsAny<CancellationToken>()), Times.Once);
+            smbClient.Verify(x => x.DeleteFileAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task MoveFileAsync_SameShare_ChecksDestinationBeforeRename(bool destinationExists)
+        {
+            var logger = new Mock<ILogger<FileHandler>>();
+            var process = new Mock<SmbSharp.Infrastructure.Interfaces.IProcessWrapper>(MockBehavior.Strict);
+            process.Setup(x => x.ExecuteAsync("smbclient",
+                    It.Is<IEnumerable<string>>(args => args.SequenceEqual(new[] { "--version" })),
+                    It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new SmbSharp.Infrastructure.Interfaces.ProcessResult
+                    { ExitCode = 0, StandardOutput = "", StandardError = "" });
+            process.Setup(x => x.ExecuteAsync("smbclient",
+                    It.Is<IEnumerable<string>>(args => args.Contains(
+                        "ls \"destination folder/destination.txt\"")),
+                    It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new SmbSharp.Infrastructure.Interfaces.ProcessResult
+                {
+                    ExitCode = destinationExists ? 0 : 1,
+                    StandardOutput = destinationExists
+                        ? "  destination.txt                     A        3  Fri Oct  2 12:00:00 2026"
+                        : "NT_STATUS_NO_SUCH_FILE listing destination folder/destination.txt",
+                    StandardError = ""
+                });
+            process.Setup(x => x.ExecuteAsync("smbclient",
+                    It.Is<IEnumerable<string>>(args => args.Contains("ls \"destination folder\"")),
+                    It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new SmbSharp.Infrastructure.Interfaces.ProcessResult
+                {
+                    ExitCode = 0,
+                    StandardOutput = "  destination folder                  D        0  Fri Oct  2 12:00:00 2026",
+                    StandardError = ""
+                });
+            process.Setup(x => x.ExecuteAsync("smbclient",
+                    It.Is<IEnumerable<string>>(args => args.Contains(
+                        "rename \"source folder/source.txt\" \"destination folder/destination.txt\"")),
+                    It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new SmbSharp.Infrastructure.Interfaces.ProcessResult
+                    { ExitCode = 0, StandardOutput = "", StandardError = "" });
+            var smbClient = new SmbClientFileHandler(new Mock<ILogger<SmbClientFileHandler>>().Object,
+                process.Object, true);
+            using var handler = new FileHandler(logger.Object, smbClient, useWsl: true);
+
+            var operation = handler.MoveFileAsync("//server/share/source folder/source.txt",
+                "//server/share/destination folder/destination.txt");
+            if (destinationExists)
+                Assert.Contains("Destination file already exists",
+                    (await Assert.ThrowsAsync<IOException>(() => operation)).Message);
+            else
+                Assert.True(await operation);
+
+            process.Verify(x => x.ExecuteAsync("smbclient",
+                It.Is<IEnumerable<string>>(args => args.Contains(
+                    "rename \"source folder/source.txt\" \"destination folder/destination.txt\"")),
+                It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()),
+                destinationExists ? Times.Never() : Times.Once());
         }
     }
 

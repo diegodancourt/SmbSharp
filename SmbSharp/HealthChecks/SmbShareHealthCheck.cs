@@ -40,16 +40,16 @@ namespace SmbSharp.HealthChecks
 
                 if (canConnect)
                 {
-                    _logger?.LogDebug("Health check succeeded for SMB share: {DirectoryPath}", _directoryPath);
+                    _logger?.LogDebug("Health check succeeded for SMB share: {directoryPath}", _directoryPath);
                     return HealthCheckResult.Healthy($"Successfully connected to SMB share: {_directoryPath}");
                 }
 
-                _logger?.LogError("Health check failed: Unable to connect to SMB share: {DirectoryPath}", _directoryPath);
+                _logger?.LogError("Health check failed: Unable to connect to SMB share: {directoryPath}", _directoryPath);
                 return HealthCheckResult.Unhealthy($"Unable to connect to SMB share: {_directoryPath}");
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Health check failed for SMB share {DirectoryPath}: {ErrorMessage}", _directoryPath, ex.Message);
+                _logger?.LogError(ex, "Health check failed for SMB share {directoryPath}: {errorMessage}", _directoryPath, ex.Message);
                 return HealthCheckResult.Unhealthy(
                     $"Health check failed for SMB share {_directoryPath}: {ex.Message}",
                     ex);
