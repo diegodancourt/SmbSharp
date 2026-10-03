@@ -213,11 +213,11 @@ namespace SmbSharp.Tests.Business.SmbClient
             var stream = await handler.GetFileStreamAsync("//server/share", "file.txt");
             stream.Dispose();
 
-            // Assert - Verify credentials file approach is used (using -A flag)
+            // Assert - the username is an argument and the password is present only in child environment.
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<IEnumerable<string>>(args => args.Contains("-A")),
-                It.IsAny<IDictionary<string, string>>(),
+                It.Is<IEnumerable<string>>(args => args.Contains("-U") && !args.Any(a => a.Contains("testpass"))),
+                It.Is<IDictionary<string, string>>(env => env.ContainsKey("PASSWD") && env["PASSWD"] == "testpass"),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
 
@@ -236,11 +236,11 @@ namespace SmbSharp.Tests.Business.SmbClient
             var stream = await handler.GetFileStreamAsync("//server/share", "file.txt");
             stream.Dispose();
 
-            // Assert - Verify credentials file approach is used (domain is included in credentials file)
+            // Assert - the domain-qualified username is passed separately from the password environment.
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<IEnumerable<string>>(args => args.Contains("-A")),
-                It.IsAny<IDictionary<string, string>>(),
+                It.Is<IEnumerable<string>>(args => args.Contains("-U") && args.Contains("TESTDOMAIN\\testuser")),
+                It.Is<IDictionary<string, string>>(env => env.ContainsKey("PASSWD") && env["PASSWD"] == "testpass"),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
 
@@ -383,21 +383,14 @@ namespace SmbSharp.Tests.Business.SmbClient
             var stream = await handler.GetFileStreamAsync("//server/share", "file.txt");
 
             // Assert
-            Assert.IsType<FileStream>(stream);
-            var fileStream = (FileStream)stream;
-
-            // The stream should be readable
-            Assert.True(fileStream.CanRead);
-
-            // Store the path before disposing
-            var tempPath = fileStream.Name;
+            var temporaryStream = Assert.IsType<TemporaryDirectoryStream>(stream);
+            Assert.True(stream.CanRead);
+            Assert.True(Directory.Exists(temporaryStream.TemporaryDirectory));
 
             // Dispose the stream
             await stream.DisposeAsync();
 
-            // Verify temp file is deleted after stream disposal (DeleteOnClose option)
-            // Note: This might fail if the file wasn't actually created by smbclient
-            // but we can at least verify the stream was created with the right properties
+            Assert.False(Directory.Exists(temporaryStream.TemporaryDirectory));
         }
     }
 }

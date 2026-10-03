@@ -20,24 +20,38 @@ namespace SmbSharp.Business.SmbClient.Session
         private readonly int _sessionInitMaxAttempts;
         private readonly TimeSpan _sessionInitRetryDelay;
         private readonly TimeSpan? _sessionInitTimeout;
+        private readonly TimeSpan _commandTimeout;
+        private readonly string? _wslDistribution;
 
         private readonly ConcurrentDictionary<string, ShareBucket> _buckets = new();
+        private readonly object _lifecycleLock = new();
         private readonly Timer _evictionTimer;
-        private bool _disposed;
+        private volatile bool _disposed;
 
         public SmbClientSessionPool(ILoggerFactory loggerFactory, IInteractiveProcessFactory processFactory,
             bool useKerberos, string? username = null, string? password = null, string? domain = null,
             bool useWsl = false, int poolSizePerShare = 3, TimeSpan? idleTimeout = null,
-            int sessionInitMaxAttempts = 3, TimeSpan? sessionInitRetryDelay = null, TimeSpan? sessionInitTimeout = null)
+            int sessionInitMaxAttempts = 3, TimeSpan? sessionInitRetryDelay = null, TimeSpan? sessionInitTimeout = null,
+            TimeSpan? commandTimeout = null, string? wslDistribution = null)
         {
+            if (loggerFactory == null)
+                throw new ArgumentNullException(nameof(loggerFactory));
+            if (processFactory == null)
+                throw new ArgumentNullException(nameof(processFactory));
             if (poolSizePerShare < 1)
                 throw new ArgumentOutOfRangeException(nameof(poolSizePerShare), "Pool size must be at least 1.");
             if (sessionInitMaxAttempts < 1)
                 throw new ArgumentOutOfRangeException(nameof(sessionInitMaxAttempts), "Must be at least 1.");
+            if (idleTimeout is { } configuredIdleTimeout && configuredIdleTimeout <= TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(idleTimeout), "Idle timeout must be positive.");
 
             _sessionInitMaxAttempts = sessionInitMaxAttempts;
             _sessionInitRetryDelay = sessionInitRetryDelay ?? TimeSpan.FromSeconds(1);
             _sessionInitTimeout = sessionInitTimeout;
+            _commandTimeout = commandTimeout ?? TimeSpan.FromMinutes(2);
+            if (_commandTimeout <= TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(commandTimeout), "Command timeout must be positive.");
+            _wslDistribution = wslDistribution;
 
             _loggerFactory = loggerFactory;
             _logger = loggerFactory.CreateLogger<SmbClientSessionPool>();
@@ -57,24 +71,25 @@ namespace SmbSharp.Business.SmbClient.Session
         public async Task<string> ExecuteAsync(string server, string share, string command, string contextPath,
             CancellationToken cancellationToken = default)
         {
-            var key = $"{server}/{share}".ToLowerInvariant();
-            var bucket = _buckets.GetOrAdd(key, _ => new ShareBucket(_poolSizePerShare, server, share));
-            var slotIndex = SelectSlot(bucket);
-
-            var session = await GetOrCreateSessionAsync(bucket, slotIndex, cancellationToken);
-
+            ShareBucket bucket;
+            lock (_lifecycleLock)
+            {
+                if (_disposed)
+                    throw new ObjectDisposedException(nameof(SmbClientSessionPool));
+                var key = $"{server}/{share}".ToLowerInvariant();
+                bucket = _buckets.GetOrAdd(key, _ => new ShareBucket(_poolSizePerShare, server, share));
+                bucket.ActiveOperations++;
+            }
             try
             {
+                var slotIndex = SelectSlot(bucket);
+                var session = await GetOrCreateSessionAsync(bucket, slotIndex, cancellationToken);
                 return await session.ExecuteAsync(command, contextPath, cancellationToken);
             }
-            catch (SmbSessionBrokenException ex)
+            finally
             {
-                _logger.LogWarning(ex,
-                    "smbclient session for {ContextPath} was broken; recreating and retrying once.", contextPath);
-
-                await RecreateSlotAsync(bucket, slotIndex, cancellationToken);
-                var retrySession = await GetOrCreateSessionAsync(bucket, slotIndex, cancellationToken);
-                return await retrySession.ExecuteAsync(command, contextPath, cancellationToken);
+                lock (_lifecycleLock)
+                    bucket.ActiveOperations--;
             }
         }
 
@@ -116,7 +131,15 @@ namespace SmbSharp.Business.SmbClient.Session
                 bucket.Slots[slotIndex] = null;
 
                 var newSession = await CreateInitializedSessionAsync(bucket, cancellationToken);
-                bucket.Slots[slotIndex] = newSession;
+                lock (_lifecycleLock)
+                {
+                    if (_disposed)
+                    {
+                        newSession.Dispose();
+                        throw new ObjectDisposedException(nameof(SmbClientSessionPool));
+                    }
+                    bucket.Slots[slotIndex] = newSession;
+                }
                 return newSession;
             }
             finally
@@ -132,7 +155,7 @@ namespace SmbSharp.Business.SmbClient.Session
             {
                 var session = new SmbClientSession(_loggerFactory.CreateLogger<SmbClientSession>(),
                     _processFactory, bucket.Server, bucket.Share, _useKerberos, _username, _password, _domain,
-                    _useWsl, _sessionInitTimeout);
+                    _useWsl, _sessionInitTimeout, _commandTimeout, _wslDistribution);
                 try
                 {
                     await session.InitializeAsync(cancellationToken);
@@ -150,7 +173,7 @@ namespace SmbSharp.Business.SmbClient.Session
 
                     var delay = ComputeRetryDelay(attempt);
                     _logger.LogWarning(ex,
-                        "Failed to establish smbclient session for //{Server}/{Share} (attempt {Attempt}/{MaxAttempts}); retrying in {DelayMs}ms.",
+                        "Failed to establish smbclient session for //{server}/{share} (attempt {attempt}/{maxAttempts}); retrying in {delayMs}ms.",
                         bucket.Server, bucket.Share, attempt, _sessionInitMaxAttempts, (int)delay.TotalMilliseconds);
 
                     if (delay > TimeSpan.Zero)
@@ -179,60 +202,57 @@ namespace SmbSharp.Business.SmbClient.Session
         private static double NextJitter() => JitterRandom.Value!.NextDouble();
 #endif
 
-        private async Task RecreateSlotAsync(ShareBucket bucket, int slotIndex, CancellationToken cancellationToken)
-        {
-            await bucket.SlotLocks[slotIndex].WaitAsync(cancellationToken);
-            try
-            {
-                bucket.Slots[slotIndex]?.Dispose();
-                bucket.Slots[slotIndex] = null;
-            }
-            finally
-            {
-                bucket.SlotLocks[slotIndex].Release();
-            }
-        }
-
         private void EvictIdleBuckets()
         {
-            if (_disposed)
-                return;
-
             var cutoff = DateTime.UtcNow - _idleTimeout;
-            foreach (var kvp in _buckets)
+            List<ShareBucket> expired = new();
+            lock (_lifecycleLock)
             {
-                if (kvp.Value.LastUsedUtc >= cutoff)
-                    continue;
+                if (_disposed)
+                    return;
 
-                if (_buckets.TryRemove(kvp.Key, out var bucket))
+                foreach (var kvp in _buckets)
                 {
-                    _logger.LogDebug("Evicting idle smbclient session pool for {Server}/{Share}", bucket.Server,
+                    if (kvp.Value.ActiveOperations > 0 || kvp.Value.LastUsedUtc >= cutoff ||
+                        kvp.Value.Slots.Any(session => session?.IsBusy == true))
+                        continue;
+                    if (_buckets.TryRemove(kvp.Key, out var bucket))
+                        expired.Add(bucket);
+                }
+            }
+
+            foreach (var bucket in expired)
+            {
+                if (bucket != null)
+                {
+                    _logger.LogDebug("Evicting idle smbclient session pool for {server}/{share}", bucket.Server,
                         bucket.Share);
-                    foreach (var slot in bucket.Slots)
-                    {
-                        slot?.Dispose();
-                    }
+                    DisposeBucket(bucket);
                 }
             }
         }
 
         public void Dispose()
         {
-            if (_disposed)
-                return;
-            _disposed = true;
-
+            ShareBucket[] buckets;
+            lock (_lifecycleLock)
+            {
+                if (_disposed)
+                    return;
+                _disposed = true;
+                buckets = _buckets.Values.ToArray();
+                _buckets.Clear();
+            }
             _evictionTimer.Dispose();
 
-            foreach (var bucket in _buckets.Values)
-            {
-                foreach (var slot in bucket.Slots)
-                {
-                    slot?.Dispose();
-                }
-            }
+            foreach (var bucket in buckets)
+                DisposeBucket(bucket);
+        }
 
-            _buckets.Clear();
+        private static void DisposeBucket(ShareBucket bucket)
+        {
+            foreach (var slot in bucket.Slots)
+                slot?.Dispose();
         }
 
         private class ShareBucket
@@ -242,6 +262,7 @@ namespace SmbSharp.Business.SmbClient.Session
             public readonly string Server;
             public readonly string Share;
             public int RoundRobinCounter;
+            public int ActiveOperations;
 
             public ShareBucket(int size, string server, string share)
             {

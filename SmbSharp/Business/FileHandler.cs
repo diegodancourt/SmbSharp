@@ -15,11 +15,12 @@ namespace SmbSharp.Business
     /// Implementation of IFileHandler that provides SMB/CIFS file operations across different platforms.
     /// Uses native UNC paths on Windows (or smbclient via WSL if opted in) and smbclient on Linux/macOS.
     /// </summary>
-    public class FileHandler : IFileHandler
+    public class FileHandler : IFileHandler, IDisposable
     {
         private readonly ILogger<FileHandler> _logger;
         private readonly ISmbClientFileHandler _smbClientFileHandler;
         private readonly bool _useSmbClient;
+        private readonly ISmbClientSessionPool? _ownedSessionPool;
 
         /// <summary>
         /// Creates a new FileHandler using Kerberos authentication.
@@ -32,24 +33,36 @@ namespace SmbSharp.Business
         /// sessions open per share instead of re-authenticating on every call. Strongly recommended.</param>
         /// <param name="sessionPoolSize">Number of persistent sessions kept per share when useSessionPool is true.</param>
         /// <param name="sessionIdleTimeout">How long an idle session may sit before disposal when useSessionPool is true.</param>
+        /// <param name="sessionCommandTimeout">Maximum duration of one pooled smbclient command.</param>
+        /// <param name="wslDistribution">Optional WSL distribution name; null uses the default distribution.</param>
         /// <returns>A new FileHandler instance</returns>
         /// <exception cref="PlatformNotSupportedException">Thrown when running on unsupported platform</exception>
         /// <exception cref="InvalidOperationException">Thrown when smbclient is not available on Linux/macOS (or via WSL when useWsl is true)</exception>
         public static FileHandler CreateWithKerberos(ILoggerFactory? loggerFactory = null, bool useWsl = false,
-            bool useSessionPool = false, int sessionPoolSize = 3, TimeSpan? sessionIdleTimeout = null)
+            bool useSessionPool = false, int sessionPoolSize = 3, TimeSpan? sessionIdleTimeout = null,
+            TimeSpan? sessionCommandTimeout = null, string? wslDistribution = null)
         {
             loggerFactory ??= new NullLoggerFactory();
             var processWrapper = new ProcessWrapper(loggerFactory.CreateLogger<ProcessWrapper>());
             var sessionPool = CreateSessionPoolIfEnabled(loggerFactory, useSessionPool, useKerberos: true,
-                username: null, password: null, domain: null, useWsl, sessionPoolSize, sessionIdleTimeout);
-            var smbClientHandler = new SmbClientFileHandler(
-                loggerFactory.CreateLogger<SmbClientFileHandler>(),
-                processWrapper,
-                useKerberos: true,
-                useWsl: useWsl,
-                sessionPool: sessionPool);
-
-            return new FileHandler(loggerFactory.CreateLogger<FileHandler>(), smbClientHandler, useWsl);
+                username: null, password: null, domain: null, useWsl, sessionPoolSize, sessionIdleTimeout,
+                sessionCommandTimeout, wslDistribution);
+            try
+            {
+                var smbClientHandler = new SmbClientFileHandler(
+                    loggerFactory.CreateLogger<SmbClientFileHandler>(),
+                    processWrapper,
+                    useKerberos: true,
+                    useWsl: useWsl,
+                    sessionPool: sessionPool,
+                    wslDistribution: wslDistribution);
+                return new FileHandler(loggerFactory.CreateLogger<FileHandler>(), smbClientHandler, useWsl, sessionPool);
+            }
+            catch
+            {
+                sessionPool?.Dispose();
+                throw;
+            }
         }
 
         /// <summary>
@@ -66,13 +79,16 @@ namespace SmbSharp.Business
         /// sessions open per share instead of re-authenticating on every call.</param>
         /// <param name="sessionPoolSize">Number of persistent sessions kept per share when useSessionPool is true.</param>
         /// <param name="sessionIdleTimeout">How long an idle session may sit before disposal when useSessionPool is true.</param>
+        /// <param name="sessionCommandTimeout">Maximum duration of one pooled smbclient command.</param>
+        /// <param name="wslDistribution">Optional WSL distribution name; null uses the default distribution.</param>
         /// <returns>A new FileHandler instance</returns>
         /// <exception cref="ArgumentException">Thrown when username or password is null or empty</exception>
         /// <exception cref="PlatformNotSupportedException">Thrown when running on unsupported platform</exception>
         /// <exception cref="InvalidOperationException">Thrown when smbclient is not available on Linux/macOS (or via WSL when useWsl is true)</exception>
         public static FileHandler CreateWithCredentials(string username, string password, string? domain = null,
             ILoggerFactory? loggerFactory = null, bool useWsl = false, bool useSessionPool = false,
-            int sessionPoolSize = 3, TimeSpan? sessionIdleTimeout = null)
+            int sessionPoolSize = 3, TimeSpan? sessionIdleTimeout = null,
+            TimeSpan? sessionCommandTimeout = null, string? wslDistribution = null)
         {
             if (string.IsNullOrWhiteSpace(username))
                 throw new ArgumentException("Username cannot be null or empty", nameof(username));
@@ -82,30 +98,40 @@ namespace SmbSharp.Business
             loggerFactory ??= new NullLoggerFactory();
             var processWrapper = new ProcessWrapper(loggerFactory.CreateLogger<ProcessWrapper>());
             var sessionPool = CreateSessionPoolIfEnabled(loggerFactory, useSessionPool, useKerberos: false,
-                username, password, domain, useWsl, sessionPoolSize, sessionIdleTimeout);
-            var smbClientHandler = new SmbClientFileHandler(
-                loggerFactory.CreateLogger<SmbClientFileHandler>(),
-                processWrapper,
-                useKerberos: false,
-                username,
-                password,
-                domain,
-                useWsl: useWsl,
-                sessionPool: sessionPool);
-
-            return new FileHandler(loggerFactory.CreateLogger<FileHandler>(), smbClientHandler, useWsl);
+                username, password, domain, useWsl, sessionPoolSize, sessionIdleTimeout,
+                sessionCommandTimeout, wslDistribution);
+            try
+            {
+                var smbClientHandler = new SmbClientFileHandler(
+                    loggerFactory.CreateLogger<SmbClientFileHandler>(),
+                    processWrapper,
+                    useKerberos: false,
+                    username,
+                    password,
+                    domain,
+                    useWsl: useWsl,
+                    sessionPool: sessionPool,
+                    wslDistribution: wslDistribution);
+                return new FileHandler(loggerFactory.CreateLogger<FileHandler>(), smbClientHandler, useWsl, sessionPool);
+            }
+            catch
+            {
+                sessionPool?.Dispose();
+                throw;
+            }
         }
 
         private static ISmbClientSessionPool? CreateSessionPoolIfEnabled(ILoggerFactory loggerFactory,
             bool useSessionPool, bool useKerberos, string? username, string? password, string? domain, bool useWsl,
-            int sessionPoolSize, TimeSpan? sessionIdleTimeout)
+            int sessionPoolSize, TimeSpan? sessionIdleTimeout, TimeSpan? sessionCommandTimeout, string? wslDistribution)
         {
             if (!useSessionPool)
                 return null;
 
             var processFactory = new InteractiveProcessFactory(loggerFactory);
             return new SmbClientSessionPool(loggerFactory, processFactory, useKerberos, username, password, domain,
-                useWsl, sessionPoolSize, sessionIdleTimeout);
+                useWsl, sessionPoolSize, sessionIdleTimeout, commandTimeout: sessionCommandTimeout,
+                wslDistribution: wslDistribution);
         }
 
 
@@ -133,9 +159,16 @@ namespace SmbSharp.Business
         /// <exception cref="PlatformNotSupportedException">Thrown when running on unsupported platform</exception>
         /// <exception cref="InvalidOperationException">Thrown when smbclient is not available on Linux/macOS (or via WSL when useWsl is true)</exception>
         public FileHandler(ILogger<FileHandler> logger, ISmbClientFileHandler smbClientFileHandler, bool useWsl)
+            : this(logger, smbClientFileHandler, useWsl, null)
+        {
+        }
+
+        internal FileHandler(ILogger<FileHandler> logger, ISmbClientFileHandler smbClientFileHandler, bool useWsl,
+            ISmbClientSessionPool? ownedSessionPool)
         {
             _logger = logger;
             _smbClientFileHandler = smbClientFileHandler;
+            _ownedSessionPool = ownedSessionPool;
 
             // On Linux/macOS, always use smbclient. On Windows, only if useWsl is opted in.
             _useSmbClient = !RuntimeInformation.IsOSPlatform(OSPlatform.Windows) || useWsl;
@@ -150,7 +183,7 @@ namespace SmbSharp.Business
                 !RuntimeInformation.IsOSPlatform(OSPlatform.Linux) &&
                 !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
-                _logger.LogError("Unsupported platform: {Platform}", RuntimeInformation.OSDescription);
+                _logger.LogError("Unsupported platform: {platform}", RuntimeInformation.OSDescription);
                 throw new PlatformNotSupportedException(
                     "SmbSharp only supports Windows, Linux, and macOS platforms. " +
                     $"Current platform: {RuntimeInformation.OSDescription}");
@@ -226,7 +259,8 @@ namespace SmbSharp.Business
 
                 return Directory.EnumerateFiles(directory)
                     .Select(Path.GetFileName)
-                    .Where(f => !string.IsNullOrEmpty(f))!;
+                    .Where(f => !string.IsNullOrEmpty(f))
+                    .ToList()!;
             }, cancellationToken);
         }
 
@@ -256,7 +290,8 @@ namespace SmbSharp.Business
 
                 return Directory.EnumerateDirectories(directory)
                     .Select(Path.GetFileName)
-                    .Where(f => !string.IsNullOrEmpty(f))!;
+                    .Where(f => !string.IsNullOrEmpty(f))
+                    .ToList()!;
             }, cancellationToken);
         }
 
@@ -476,8 +511,6 @@ namespace SmbSharp.Business
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // For smbclient, we need to download and re-upload since there's no native move command.
-                // This operation is made atomic with retry logic and rollback on failure.
                 var (sourceDir, sourceFileName) = SplitSmbFilePath(sourceFilePath);
                 if (string.IsNullOrEmpty(sourceDir))
                     throw new ArgumentException("Invalid source path - cannot determine directory",
@@ -494,67 +527,25 @@ namespace SmbSharp.Business
                     throw new ArgumentException("Invalid destination path - cannot determine file name",
                         nameof(destinationFilePath));
 
-                bool destinationWritten = false;
-                try
+                if (GetShareRoot(sourceFilePath).Equals(GetShareRoot(destinationFilePath), StringComparison.OrdinalIgnoreCase) &&
+                    _smbClientFileHandler is ISmbClientFileHandlerMove moveHandler)
                 {
-                    // Step 1: Read source file into memory
-                    await using var stream =
-                        await _smbClientFileHandler.GetFileStreamAsync(sourceDir, sourceFileName, cancellationToken);
+                    if (await _smbClientFileHandler.FileExistsAsync(destFileName, destDir, cancellationToken))
+                        throw new IOException($"Destination file already exists: {destinationFilePath}");
 
-                    // Step 2: Write to destination location
-                    await _smbClientFileHandler.WriteFileAsync(destDir, destFileName, stream, cancellationToken);
-                    destinationWritten = true;
-
-                    // Step 3: Delete source file to complete the move
-                    await _smbClientFileHandler.DeleteFileAsync(sourceDir, sourceFileName, cancellationToken);
-
+                    await moveHandler.RenameFileAsync(sourceDir, sourceFileName, destDir, destFileName, cancellationToken);
                     return true;
                 }
-                catch
-                {
-                    // Atomic operation: If destination was written but source deletion failed,
-                    // retry once to handle transient issues before rolling back
-                    if (destinationWritten)
-                    {
-                        try
-                        {
-                            _logger.LogWarning(
-                                "Failed to delete source file {SourceFilePath} after copying, retrying once...",
-                                sourceFilePath);
 
-                            // Brief delay to handle transient network or file lock issues
-                            await Task.Delay(100, cancellationToken);
-
-                            // Retry: Attempt to delete source file one more time
-                            await _smbClientFileHandler.DeleteFileAsync(sourceDir, sourceFileName, cancellationToken);
-
-                            // Success: Retry completed the move operation
-                            return true;
-                        }
-                        catch
-                        {
-                            // Rollback: Both attempts failed, delete destination to maintain atomicity
-                            // This ensures the file exists in only the original location
-                            _logger.LogError(
-                                "Retry failed to delete source file {SourceFilePath}, rolling back destination",
-                                sourceFilePath);
-
-                            try
-                            {
-                                await _smbClientFileHandler.DeleteFileAsync(destDir, destFileName, cancellationToken);
-                            }
-                            catch
-                            {
-                                // Cleanup failed - log but don't mask the original exception
-                                _logger.LogError(
-                                    "Failed to cleanup destination file {DestinationFilePath} after move operation failed",
-                                    destinationFilePath);
-                            }
-                        }
-                    }
-
-                    throw;
-                }
+                // Cross-share moves must copy data. CreateNew avoids clobbering a destination that
+                // was already present; if source deletion fails, retain both copies rather than risk
+                // deleting a destination we did not create or losing the only remaining copy.
+                await using var stream =
+                    await _smbClientFileHandler.GetFileStreamAsync(sourceDir, sourceFileName, cancellationToken);
+                await _smbClientFileHandler.WriteFileAsync(destDir, destFileName, stream,
+                    FileWriteMode.CreateNew, cancellationToken);
+                await _smbClientFileHandler.DeleteFileAsync(sourceDir, sourceFileName, cancellationToken);
+                return true;
             }
 
             // Use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
@@ -611,6 +602,15 @@ namespace SmbSharp.Business
 
             // Use direct IO operations for UNC paths - wrap in Task.Run to avoid blocking
             return await Task.Run(() => Directory.Exists(directoryPath), cancellationToken);
+        }
+
+        /// <summary>Disposes any persistent session pool created by this factory-created handler.</summary>
+        public void Dispose() => _ownedSessionPool?.Dispose();
+
+        private static string GetShareRoot(string path)
+        {
+            var segments = path.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+            return segments.Length < 2 ? string.Empty : $"//{segments[0]}/{segments[1]}";
         }
     }
 }

@@ -7,6 +7,40 @@ using SmbSharp.Infrastructure.Interfaces;
 
 namespace SmbSharp.Tests.Business.SmbClient
 {
+    public class SmbClientFileHandlerRenameTests
+    {
+        [Theory]
+        [InlineData(0, "", false)]
+        [InlineData(0, "NT_STATUS_OBJECT_NAME_COLLISION renaming files", true)]
+        [InlineData(1, "NT_STATUS_OBJECT_NAME_COLLISION renaming files", true)]
+        public async Task RenameFileAsync_UsesQuotedServerSideRename_AndSurfacesCollision(int exitCode,
+            string error, bool expectCollision)
+        {
+            var process = new Mock<IProcessWrapper>();
+            process.SetupSmbClient(new ProcessResult
+            {
+                ExitCode = exitCode,
+                StandardOutput = error,
+                StandardError = ""
+            });
+            var handler = new SmbClientFileHandler(new Mock<ILogger<SmbClientFileHandler>>().Object,
+                process.Object, true);
+
+            var operation = handler.RenameFileAsync("//server/share/source folder", "source.txt",
+                "//server/share/destination folder", "destination.txt", CancellationToken.None);
+            if (expectCollision)
+                Assert.Contains("NT_STATUS_OBJECT_NAME_COLLISION",
+                    (await Assert.ThrowsAsync<IOException>(() => operation)).Message);
+            else
+                await operation;
+
+            process.Verify(x => x.ExecuteAsync("smbclient",
+                It.Is<IEnumerable<string>>(args => args.Contains(
+                    "rename \"source folder/source.txt\" \"destination folder/destination.txt\"")),
+                It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()), Times.Once);
+        }
+    }
+
     /// <summary>
     /// Helper extension methods for setting up mocks
     /// </summary>
@@ -106,6 +140,24 @@ namespace SmbSharp.Tests.Business.SmbClient
             Assert.Contains("my payment file.ach", files);
             Assert.Contains("another file name.txt", files);
             Assert.Contains("normal.doc", files);
+        }
+
+        [Fact]
+        public async Task EnumerateFilesAsync_PtyOutputWithCarriageReturn_ReturnsFileName()
+        {
+            var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
+            var mockProcess = new Mock<IProcessWrapper>();
+            mockProcess.SetupSmbClient(new ProcessResult
+            {
+                ExitCode = 0,
+                StandardOutput = "\r  Invoice not found.txt               A       10  Fri Oct  2 18:43:25 2026"
+            });
+
+            var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
+
+            var files = (await handler.EnumerateFilesAsync("//server/share")).ToList();
+
+            Assert.Equal(new[] { "Invoice not found.txt" }, files);
         }
 
         [Fact]
@@ -409,10 +461,11 @@ stream: [:Zone.Identifier:$DATA], 26 bytes";
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
 
-            var smbClientOutput = @"  file1.txt                          A    12345  Mon Jan 29 10:00:00 2026
-  file2.doc                           A    67890  Tue Jan 30 11:00:00 2026";
-
-            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
+            mockProcess
+                .SetupSequence(x => x.ExecuteAsync("smbclient", It.IsAny<IEnumerable<string>>(),
+                    It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ProcessResult { ExitCode = 1, StandardError = "NT_STATUS_OBJECT_NAME_NOT_FOUND" })
+                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
 
@@ -444,16 +497,35 @@ stream: [:Zone.Identifier:$DATA], 26 bytes";
         }
 
         [Fact]
+        public async Task FileExistsAsync_PtyOutputWithCarriageReturnAndNotFoundPhrase_ReturnsTrue()
+        {
+            var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
+            var mockProcess = new Mock<IProcessWrapper>();
+            mockProcess.SetupSmbClient(new ProcessResult
+            {
+                ExitCode = 0,
+                StandardOutput = "\r  Invoice not found.txt               A       10  Fri Oct  2 18:43:25 2026"
+            });
+
+            var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
+
+            var result = await handler.FileExistsAsync("Invoice not found.txt", "//server/share");
+
+            Assert.True(result);
+        }
+
+        [Fact]
         public async Task FileExistsAsync_EmptyDirectory_ReturnsFalse()
         {
             // Arrange
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
 
-            var smbClientOutput = @"  .                                  D        0  Wed Jan 31 12:00:00 2026
-  ..                                 D        0  Wed Jan 31 12:00:00 2026";
-
-            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = smbClientOutput });
+            mockProcess.SetupSmbClient(new ProcessResult
+            {
+                ExitCode = 1,
+                StandardError = "NT_STATUS_OBJECT_NAME_NOT_FOUND"
+            });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
 
@@ -470,6 +542,24 @@ stream: [:Zone.Identifier:$DATA], 26 bytes";
     /// </summary>
     public class SmbClientFileHandlerAuthenticationTests
     {
+        [Fact]
+        public async Task EnumerateFilesAsync_OneShotLogonFailureOnStandardOutput_IsUnauthorized()
+        {
+            var logger = new Mock<ILogger<SmbClientFileHandler>>();
+            var process = new Mock<IProcessWrapper>();
+            process.SetupSmbClient(new ProcessResult
+            {
+                ExitCode = 1,
+                StandardOutput = "session setup failed: NT_STATUS_LOGON_FAILURE"
+            });
+            var handler = new SmbClientFileHandler(logger.Object, process.Object, useKerberos: true);
+
+            var exception = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                handler.EnumerateFilesAsync("//server/share"));
+
+            Assert.Contains("NT_STATUS_LOGON_FAILURE", exception.Message);
+        }
+
         [Fact]
         public async Task EnumerateFilesAsync_Kerberos_UsesKerberosFlag()
         {
@@ -512,11 +602,11 @@ stream: [:Zone.Identifier:$DATA], 26 bytes";
             // Act
             await handler.EnumerateFilesAsync("//server/share");
 
-            // Assert - Verify credentials file approach is used (using -A flag)
+            // Assert - password must only be passed in the child environment.
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<IEnumerable<string>>(args => args.Contains("-A")),
-                It.IsAny<IDictionary<string, string>>(),
+                It.Is<IEnumerable<string>>(args => args.Contains("-U") && !args.Any(a => a.Contains("testpass"))),
+                It.Is<IDictionary<string, string>>(env => env.ContainsKey("PASSWD") && env["PASSWD"] == "testpass"),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
 
@@ -534,11 +624,11 @@ stream: [:Zone.Identifier:$DATA], 26 bytes";
             // Act
             await handler.EnumerateFilesAsync("//server/share");
 
-            // Assert - Verify credentials file approach is used
+            // Assert - domain-qualified username and child-only password environment.
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<IEnumerable<string>>(args => args.Contains("-A")),
-                It.IsAny<IDictionary<string, string>>(),
+                It.Is<IEnumerable<string>>(args => args.Contains("-U") && args.Contains("TESTDOMAIN\\testuser")),
+                It.Is<IDictionary<string, string>>(env => env.ContainsKey("PASSWD") && env["PASSWD"] == "testpass"),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
     }
@@ -548,6 +638,34 @@ stream: [:Zone.Identifier:$DATA], 26 bytes";
     /// </summary>
     public class SmbClientFileHandlerSecurityTests
     {
+        [Theory]
+        [InlineData("safe name.txt")]
+        [InlineData("  ")]
+        [InlineData("nested/path.txt")]
+        public void CommandBuilder_QuotesSafeNamesWithoutRejectingSpacesOrSubpaths(string path)
+        {
+            Assert.Equal($"\"{path}\"", SmbClientCommandBuilder.QuotePath(path, nameof(path)));
+        }
+
+        [Theory]
+        [InlineData("x\"; del *;")]
+        [InlineData("name; del *")]
+        [InlineData("wildcard*.txt")]
+        [InlineData("question?.txt")]
+        [InlineData("line\nbreak.txt")]
+        [InlineData("!touch-payload")]
+        public async Task GetFileStreamAsync_UnsafeFileName_IsRejectedBeforeLaunchingProcess(string fileName)
+        {
+            var logger = new Mock<ILogger<SmbClientFileHandler>>();
+            var process = new Mock<IProcessWrapper>();
+            var handler = new SmbClientFileHandler(logger.Object, process.Object, useKerberos: true);
+
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                handler.GetFileStreamAsync("//server/share", fileName));
+            process.Verify(x => x.ExecuteAsync(It.IsAny<string>(), It.IsAny<IEnumerable<string>>(),
+                It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+
         [Fact]
         public async Task EnumerateFilesAsync_PathWithSpecialCharacters_EscapesCorrectly()
         {
@@ -610,7 +728,7 @@ stream: [:Zone.Identifier:$DATA], 26 bytes";
             // Assert
             mockProcess.Verify(x => x.ExecuteAsync(
                 "smbclient",
-                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("subfolder/*"))),
+                It.Is<IEnumerable<string>>(args => args.Any(a => a.Contains("subfolder") && a.Contains("/*"))),
                 It.IsAny<IDictionary<string, string>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -978,8 +1096,14 @@ stream: [:Zone.Identifier:$DATA], 26 bytes";
             // Arrange
             var mockLogger = new Mock<ILogger<SmbClientFileHandler>>();
             var mockProcess = new Mock<IProcessWrapper>();
+            var capturedArguments = new List<string>();
 
-            mockProcess.SetupSmbClient(new ProcessResult { ExitCode = 0, StandardOutput = "" });
+            mockProcess
+                .Setup(x => x.ExecuteAsync("smbclient", It.IsAny<IEnumerable<string>>(),
+                    It.IsAny<IDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .Callback<string, IEnumerable<string>, IDictionary<string, string>?, CancellationToken>(
+                    (cmd, args, env, ct) => capturedArguments.AddRange(args))
+                .ReturnsAsync(new ProcessResult { ExitCode = 0, StandardOutput = "" });
 
             var handler = new SmbClientFileHandler(mockLogger.Object, mockProcess.Object, true);
 
@@ -988,6 +1112,8 @@ stream: [:Zone.Identifier:$DATA], 26 bytes";
 
             // Assert
             Assert.True(result);
+            Assert.Contains("ls", capturedArguments);
+            Assert.DoesNotContain("ls \"/\"", capturedArguments);
         }
 
         [Fact]
@@ -1050,10 +1176,9 @@ stream: [:Zone.Identifier:$DATA], 26 bytes";
             // Assert
             Assert.True(result);
             Assert.NotEmpty(capturedArguments);
-            // The command is now passed as a separate argument. It must be an absolute path
-            // (leading "/") and must NOT use "cd" - "cd" would permanently change the working
-            // directory of a pooled/persistent session for future unrelated commands.
-            Assert.Contains(capturedArguments, arg => arg.Contains("ls \"/path/to/directory\""));
+            // The command is passed as a separate argument and must not use "cd", which would
+            // permanently change the working directory of a pooled session.
+            Assert.Contains(capturedArguments, arg => arg.Contains("ls \"path/to/directory\""));
             Assert.DoesNotContain(capturedArguments, arg => arg.Contains("cd "));
         }
 
@@ -1079,9 +1204,9 @@ stream: [:Zone.Identifier:$DATA], 26 bytes";
             // Assert
             Assert.True(result);
             Assert.NotEmpty(capturedArguments);
-            // Path should be converted to forward slashes for smbclient, and remain absolute
-            // (leading "/") rather than using "cd", regardless of the input path's separators.
-            Assert.Contains(capturedArguments, arg => arg.Contains("ls \"/path/to/directory\""));
+            // Path should be converted to forward slashes for smbclient and remain relative
+            // to the share root rather than using "cd", regardless of the input separators.
+            Assert.Contains(capturedArguments, arg => arg.Contains("ls \"path/to/directory\""));
             Assert.DoesNotContain(capturedArguments, arg => arg.Contains("cd "));
         }
     }

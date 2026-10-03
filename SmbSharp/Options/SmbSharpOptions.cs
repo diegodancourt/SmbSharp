@@ -53,5 +53,17 @@
         /// <see cref="UseSessionPool"/> is true. Default is 15 minutes.
         /// </summary>
         public TimeSpan SessionIdleTimeout { get; set; } = TimeSpan.FromMinutes(15);
+
+        /// <summary>
+        /// Gets or sets the maximum duration of an individual pooled command. A timed-out command
+        /// terminates its session and is not automatically replayed because write completion may be uncertain.
+        /// </summary>
+        public TimeSpan SessionCommandTimeout { get; set; } = TimeSpan.FromMinutes(2);
+
+        /// <summary>
+        /// Gets or sets the WSL distribution used when <see cref="UseWsl"/> is enabled.
+        /// Null or empty selects the user's default distribution.
+        /// </summary>
+        public string? WslDistribution { get; set; }
     }
 }

@@ -70,7 +70,7 @@ namespace SmbSharp.Tests.Business.SmbClient.Session
         }
 
         [Fact]
-        public async Task ExecuteAsync_BrokenSession_RecreatesAndRetriesOnce()
+        public async Task ExecuteAsync_BrokenSession_IsNotReplayedButNextCallReconnects()
         {
             var callCount = 0;
             var factoryMock = new Mock<IInteractiveProcessFactory>();
@@ -94,9 +94,11 @@ namespace SmbSharp.Tests.Business.SmbClient.Session
             using var pool = new SmbClientSessionPool(NullLoggerFactory.Instance, factoryMock.Object,
                 useKerberos: true, poolSizePerShare: 1);
 
+            await Assert.ThrowsAsync<SmbSessionBrokenException>(() =>
+                pool.ExecuteAsync("server1", "share1", "ls", "//server1/share1"));
             await pool.ExecuteAsync("server1", "share1", "ls", "//server1/share1");
 
-            Assert.Equal(2, callCount); // original session + recreated session after the broken retry
+            Assert.Equal(2, callCount);
         }
 
         [Fact]
@@ -105,6 +107,18 @@ namespace SmbSharp.Tests.Business.SmbClient.Session
             var factoryMock = new Mock<IInteractiveProcessFactory>();
             Assert.Throws<ArgumentOutOfRangeException>(() =>
                 new SmbClientSessionPool(NullLoggerFactory.Instance, factoryMock.Object, true, poolSizePerShare: 0));
+        }
+
+        [Fact]
+        public async Task ExecuteAsync_AfterDispose_ThrowsInsteadOfCreatingSessions()
+        {
+            var factoryMock = new Mock<IInteractiveProcessFactory>();
+            var pool = new SmbClientSessionPool(NullLoggerFactory.Instance, factoryMock.Object, useKerberos: true);
+            pool.Dispose();
+
+            await Assert.ThrowsAsync<ObjectDisposedException>(() =>
+                pool.ExecuteAsync("server1", "share1", "ls", "//server1/share1"));
+            factoryMock.Verify(factory => factory.Create(), Times.Never);
         }
     }
 }

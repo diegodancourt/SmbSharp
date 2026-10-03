@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using SmbSharp.Infrastructure.Interfaces;
@@ -28,17 +28,28 @@ namespace SmbSharp.Business.SmbClient.Session
         private readonly string? _domain;
         private readonly SemaphoreSlim _executionLock = new(1, 1);
         private readonly TimeSpan _initTimeout;
+        private readonly TimeSpan _commandTimeout;
+        private readonly string? _wslDistribution;
 
         private IInteractiveProcess? _process;
-        private string? _credentialsFilePath;
         private bool _initialized;
         private volatile bool _disposed;
 
         public SmbClientSession(ILogger logger, IInteractiveProcessFactory processFactory, string server,
             string share, bool useKerberos, string? username = null, string? password = null,
-            string? domain = null, bool useWsl = false, TimeSpan? initTimeout = null)
+            string? domain = null, bool useWsl = false, TimeSpan? initTimeout = null,
+            TimeSpan? commandTimeout = null, string? wslDistribution = null)
         {
+            if (logger == null)
+                throw new ArgumentNullException(nameof(logger));
+            if (processFactory == null)
+                throw new ArgumentNullException(nameof(processFactory));
+            if (string.IsNullOrWhiteSpace(server))
+                throw new ArgumentException("Server cannot be null or empty.", nameof(server));
+            if (string.IsNullOrWhiteSpace(share))
+                throw new ArgumentException("Share cannot be null or empty.", nameof(share));
             _initTimeout = initTimeout ?? TimeSpan.FromSeconds(30);
+            _commandTimeout = commandTimeout ?? TimeSpan.FromMinutes(2);
             _logger = logger;
             _processFactory = processFactory;
             _server = server;
@@ -48,6 +59,7 @@ namespace SmbSharp.Business.SmbClient.Session
             _password = password;
             _domain = domain;
             _useWsl = useWsl;
+            _wslDistribution = wslDistribution;
         }
 
         public bool IsAlive
@@ -75,10 +87,10 @@ namespace SmbSharp.Business.SmbClient.Session
 
         public async Task InitializeAsync(CancellationToken cancellationToken = default)
         {
-            var (executable, argumentList) = BuildConnectArguments();
+            var (executable, argumentList, environmentVariables) = BuildConnectArguments();
 
             _process = _processFactory.Create();
-            _process.Start(executable, argumentList);
+            _process.Start(executable, argumentList, environmentVariables);
 
             var contextPath = $"//{_server}/{_share}";
             var stopwatch = Stopwatch.StartNew();
@@ -119,7 +131,7 @@ namespace SmbSharp.Business.SmbClient.Session
             _initialized = true;
             LastUsedUtc = DateTime.UtcNow;
 
-            _logger.LogInformation("Established persistent smbclient session for {ContextPath} in {ElapsedMs}ms",
+            _logger.LogInformation("Established persistent smbclient session for {contextPath} in {elapsedMs}ms",
                 contextPath, stopwatch.ElapsedMilliseconds);
         }
 
@@ -136,6 +148,12 @@ namespace SmbSharp.Business.SmbClient.Session
                 throw new SmbSessionBrokenException(
                     $"Cannot run command '{command}' because the smbclient session for {contextPath} has been disposed.");
             }
+            var process = _process;
+            if (process == null)
+                throw new InvalidOperationException("Session has not been initialized.");
+
+            if (command.Any(c => char.IsControl(c)) || command.Contains(';'))
+                throw new ArgumentException("A pooled smbclient command must be a single line and cannot contain command separators.", nameof(command));
 
             await _executionLock.WaitAsync(cancellationToken);
             try
@@ -151,51 +169,53 @@ namespace SmbSharp.Business.SmbClient.Session
                 // translated to their /mnt/<drive>/... equivalent - mirroring what the non-pooled
                 // path already does in SmbClientFileHandler.ExecuteSmbClientCommandAsync.
                 var effectiveCommand = _useWsl ? SmbClientPathUtil.ConvertWindowsPathsInCommand(command) : command;
+                using var commandCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                if (_commandTimeout > TimeSpan.Zero)
+                    commandCts.CancelAfter(_commandTimeout);
+                using var killOnCancellation = commandCts.Token.Register(process.Kill);
 
-                // Unlike the one-shot "smbclient -c 'cmd1;cmd2'" invocation (which smbclient itself
-                // splits on ';'), the persistent session talks to smbclient's interactive "smb: \>"
-                // prompt, which only ever accepts a single command per line - it does not understand
-                // ';'-separated chaining. Callers (e.g. CanConnectAsync building "cd \"path\"; ls")
-                // still pass semicolon-joined commands, so split and feed each one to the prompt in
-                // turn, returning the output of the last command (mirroring the one-shot behavior).
-                var subCommands = effectiveCommand.Split(';', StringSplitOptions.RemoveEmptyEntries)
-                    .Select(c => c.Trim())
-                    .Where(c => c.Length > 0)
-                    .ToList();
-
-                if (subCommands.Count == 0)
-                    subCommands.Add(effectiveCommand);
-
-                string output = string.Empty;
-                foreach (var subCommand in subCommands)
+                try
                 {
-                    try
-                    {
-                        await _process.WriteLineAsync(subCommand, cancellationToken);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        throw new SmbSessionBrokenException(
-                            $"Failed writing command '{subCommand}' to smbclient session for {contextPath}: {ex.Message}", ex);
-                    }
-
-                    try
-                    {
-                        output = await _process.ReadUntilAsync(PromptRegex, cancellationToken);
-                    }
-                    catch (IOException ex)
-                    {
-                        throw new SmbSessionBrokenException(
-                            $"smbclient session for {contextPath} ended unexpectedly while running '{subCommand}': {ex.Message}",
-                            ex);
-                    }
-
+                    await process.WriteLineAsync(effectiveCommand, commandCts.Token);
+                    var output = await process.ReadUntilAsync(PromptRegex, commandCts.Token);
                     SmbClientErrorClassifier.ThrowIfKnownError(output, contextPath);
+                    LastUsedUtc = DateTime.UtcNow;
+                    return output;
                 }
-
-                LastUsedUtc = DateTime.UtcNow;
-
-                return output;
+                catch (OperationCanceledException ex)
+                {
+                    BreakSession(killProcess: !commandCts.IsCancellationRequested);
+                    if (cancellationToken.IsCancellationRequested)
+                        throw;
+                    throw new SmbSessionBrokenException(
+                        $"smbclient command exceeded the {_commandTimeout.TotalSeconds:0}s timeout for {contextPath}.", ex);
+                }
+                catch (FileNotFoundException)
+                {
+                    LastUsedUtc = DateTime.UtcNow;
+                    throw;
+                }
+                catch (DirectoryNotFoundException)
+                {
+                    LastUsedUtc = DateTime.UtcNow;
+                    throw;
+                }
+                catch (IOException ex)
+                {
+                    BreakSession(killProcess: !commandCts.IsCancellationRequested);
+                    if (cancellationToken.IsCancellationRequested)
+                        throw new OperationCanceledException(cancellationToken);
+                    if (commandCts.IsCancellationRequested)
+                        throw new SmbSessionBrokenException(
+                            $"smbclient command exceeded the {_commandTimeout.TotalSeconds:0}s timeout for {contextPath}.", ex);
+                    throw new SmbSessionBrokenException(
+                        $"smbclient session for {contextPath} ended while running a command: {ex.Message}", ex);
+                }
+                catch
+                {
+                    BreakSession(killProcess: !commandCts.IsCancellationRequested);
+                    throw;
+                }
             }
             finally
             {
@@ -203,16 +223,17 @@ namespace SmbSharp.Business.SmbClient.Session
             }
         }
 
-        private (string executable, List<string> argumentList) BuildConnectArguments()
+        private (string executable, List<string> argumentList, IDictionary<string, string> environmentVariables)
+            BuildConnectArguments()
         {
             // smbclient never prints its interactive prompt "smb: \> " at all - not just buffered,
             // genuinely never emitted - unless it detects that its stdin is a TTY. Since .NET's
             // Process redirection always presents stdin as a pipe, we allocate a real pseudo-terminal
-            // for smbclient via "script" so it behaves as if run interactively. "-o0 -e0" (fully
-            // unbuffered) is kept as well since a pty is normally line-buffered by the kernel tty
-            // layer, but the prompt has no trailing newline so we still want smbclient's own stdio
-            // buffering disabled to avoid any additional delay.
-            var smbclientArgs = new List<string> { "stdbuf", "-o0", "-e0", "smbclient", $"//{_server}/{_share}" };
+            // for smbclient via "script" so it behaves as if run interactively.
+            var smbclientArgs = new List<string> { "smbclient", $"//{_server}/{_share}" };
+            var environment = new Dictionary<string, string>();
+            // Keep readline from emitting terminal-control sequences into captured command output.
+            environment["TERM"] = "dumb";
 
             if (_useKerberos)
             {
@@ -230,28 +251,31 @@ namespace SmbSharp.Business.SmbClient.Session
                     ? _username ?? string.Empty
                     : $"{_domain}\\{_username}";
 
-                _credentialsFilePath = Path.Combine(Path.GetTempPath(), $"smb_session_{Guid.NewGuid():N}.creds");
-                File.WriteAllText(_credentialsFilePath, $"username={username}\npassword={_password}\n");
-                TryHardenCredentialsFilePermissions(_credentialsFilePath);
-
-                smbclientArgs.Add("-A");
-                smbclientArgs.Add(_useWsl ? SmbClientPathUtil.ConvertToWslPath(_credentialsFilePath) : _credentialsFilePath);
+                smbclientArgs.Add("-U");
+                smbclientArgs.Add(username);
+                environment["PASSWD"] = _password ?? string.Empty;
             }
 
             var innerCommand = string.Join(' ', smbclientArgs.Select(ShellQuote));
-            var scriptArgs = new List<string> { "-qec", innerCommand, "/dev/null" };
+            var scriptArgs = RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+                ? new List<string> { "-q", "/dev/null", "sh", "-c", innerCommand }
+                : new List<string> { "-qec", innerCommand, "/dev/null" };
 
             if (_useWsl)
             {
-                // "script" runs inside WSL, so it must be an argument to wsl.exe (with an explicit
-                // distro name - relying on the default distro proved unreliable) rather than the
-                // top-level executable.
-                var argumentList = new List<string> { "-d", "Ubuntu", "script" };
+                var argumentList = new List<string>();
+                if (!string.IsNullOrWhiteSpace(_wslDistribution))
+                {
+                    argumentList.Add("-d");
+                    argumentList.Add(_wslDistribution);
+                }
+                argumentList.Add("script");
                 argumentList.AddRange(scriptArgs);
-                return ("wsl", argumentList);
+                AddWslEnvironment(environment);
+                return ("wsl", argumentList, environment);
             }
 
-            return ("script", scriptArgs);
+            return ("script", scriptArgs, environment);
         }
 
         private static string ShellQuote(string arg)
@@ -261,38 +285,23 @@ namespace SmbSharp.Business.SmbClient.Session
             return "'" + arg.Replace("'", "'\\''") + "'";
         }
 
-        [ExcludeFromCodeCoverage]
-        private void TryHardenCredentialsFilePermissions(string path)
+        private static void AddWslEnvironment(IDictionary<string, string> environment)
         {
-            // Sessions are created rarely (once per pool slot, not per call), so a synchronous
-            // one-off chmod here has no meaningful performance impact.
-            try
-            {
-                var chmodTarget = _useWsl ? SmbClientPathUtil.ConvertToWslPath(path) : path;
-                var (fileName, args) = _useWsl
-                    ? ("wsl", new[] { "chmod", "600", chmodTarget })
-                    : ("chmod", new[] { "600", chmodTarget });
+            var entries = (Environment.GetEnvironmentVariable("WSLENV") ?? string.Empty)
+                .Split(':', StringSplitOptions.RemoveEmptyEntries)
+                .Where(entry => !entry.Split('/')[0].Equals("TERM", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (!entries.Any(entry => entry.Equals("PASSWD/u", StringComparison.OrdinalIgnoreCase)))
+                entries.Add("PASSWD/u");
+            entries.Add("TERM/u");
+            environment["WSLENV"] = string.Join(':', entries);
+        }
 
-                using var process = new Process
-                {
-                    StartInfo = new ProcessStartInfo(fileName)
-                    {
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    }
-                };
-                foreach (var arg in args)
-                {
-                    process.StartInfo.ArgumentList.Add(arg);
-                }
-
-                process.Start();
-                process.WaitForExit(2000);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to set permissions on SMB session credentials file.");
-            }
+        private void BreakSession(bool killProcess = true)
+        {
+            _initialized = false;
+            if (killProcess)
+                _process?.Kill();
         }
 
         public void Dispose()
@@ -302,20 +311,6 @@ namespace SmbSharp.Business.SmbClient.Session
             _disposed = true;
 
             _process?.Dispose();
-
-            if (_credentialsFilePath != null)
-            {
-                try
-                {
-                    File.Delete(_credentialsFilePath);
-                }
-                catch
-                {
-                    // ignore cleanup errors
-                }
-            }
-
-            _executionLock.Dispose();
         }
     }
 }

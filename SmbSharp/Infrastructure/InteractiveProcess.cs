@@ -14,10 +14,8 @@ namespace SmbSharp.Infrastructure
     [ExcludeFromCodeCoverage]
     internal class InteractiveProcess : IInteractiveProcess
     {
-        // Only the tail of the accumulated output needs to be checked against the terminator regex,
-        // so we cap how much text we re-scan on every read to avoid O(n^2) behavior on chatty output
-        // (e.g. "get"/"put" progress lines).
-        private const int TailWindowSize = 4096;
+        private const int ReadBufferSize = 4096;
+        private const int TailWindowSize = 256;
 
         private readonly ILogger? _logger;
         private Process? _process;
@@ -28,7 +26,22 @@ namespace SmbSharp.Infrastructure
             _logger = logger;
         }
 
-        public bool HasExited => _process == null || _process.HasExited;
+        public bool HasExited
+        {
+            get
+            {
+                if (_process == null)
+                    return true;
+                try
+                {
+                    return _process.HasExited;
+                }
+                catch (InvalidOperationException)
+                {
+                    return true;
+                }
+            }
+        }
 
         public void Start(string fileName, IEnumerable<string> argumentList,
             IDictionary<string, string>? environmentVariables = null)
@@ -39,6 +52,9 @@ namespace SmbSharp.Infrastructure
                 RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
@@ -58,6 +74,7 @@ namespace SmbSharp.Infrastructure
 
             _process = new Process { StartInfo = startInfo };
             _process.Start();
+            _ = _process.StandardError.ReadToEndAsync();
         }
 
         public async Task WriteLineAsync(string line, CancellationToken cancellationToken = default)
@@ -80,7 +97,7 @@ namespace SmbSharp.Infrastructure
                 throw new InvalidOperationException("Process has not been started.");
 
             var reader = _process.StandardOutput;
-            var buffer = new char[1];
+            var buffer = new char[ReadBufferSize];
 
             while (true)
             {
@@ -103,9 +120,9 @@ namespace SmbSharp.Infrastructure
                 }
 
 #if NET7_0_OR_GREATER
-                var read = await reader.ReadAsync(buffer.AsMemory(0, 1), cancellationToken);
+                var read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken);
 #else
-                var read = await reader.ReadAsync(buffer, 0, 1);
+                var read = await reader.ReadAsync(buffer, 0, buffer.Length);
 #endif
                 if (read == 0)
                 {
@@ -117,7 +134,7 @@ namespace SmbSharp.Infrastructure
                         $"Partial output: {remaining}");
                 }
 
-                _pendingOutput.Append(buffer[0]);
+                _pendingOutput.Append(buffer, 0, read);
             }
         }
 

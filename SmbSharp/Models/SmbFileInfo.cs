@@ -13,22 +13,26 @@ namespace SmbSharp.Models
         public string? AlternateName { get; set; }
 
         /// <summary>
-        /// The file's creation time, if it could be determined.
+        /// The file's creation time, if it could be determined. smbclient timestamps have an
+        /// unspecified <see cref="DateTime.Kind"/> because its output may omit server timezone information.
         /// </summary>
         public DateTime? CreateTime { get; set; }
 
         /// <summary>
-        /// The file's last access time, if it could be determined.
+        /// The file's last access time, if it could be determined. smbclient timestamps have an
+        /// unspecified <see cref="DateTime.Kind"/> because its output may omit server timezone information.
         /// </summary>
         public DateTime? AccessTime { get; set; }
 
         /// <summary>
         /// The file's last write (modification) time, if it could be determined.
+        /// smbclient timestamps have an unspecified <see cref="DateTime.Kind"/> because its output may omit server timezone information.
         /// </summary>
         public DateTime? WriteTime { get; set; }
 
         /// <summary>
         /// The file's last metadata-change time, if it could be determined.
+        /// smbclient timestamps have an unspecified <see cref="DateTime.Kind"/> because its output may omit server timezone information.
         /// On Windows native paths, .NET does not expose a distinct "change time",
         /// so this falls back to the write time.
         /// </summary>

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using SmbSharp.Business;
 using SmbSharp.Business.Interfaces;
 using SmbSharp.Business.SmbClient;
@@ -24,7 +25,7 @@ namespace SmbSharp.Extensions
         /// <returns>The service collection for chaining</returns>
         public static IServiceCollection AddSmbSharp(this IServiceCollection services)
         {
-            services.AddSingleton<IProcessWrapper>(sp =>
+            services.TryAddSingleton<IProcessWrapper>(sp =>
             {
                 var logger = sp.GetRequiredService<ILogger<ProcessWrapper>>();
                 return new ProcessWrapper(logger);
@@ -45,12 +46,12 @@ namespace SmbSharp.Extensions
         /// <param name="services">The service collection</param>
         /// <param name="username">The username for SMB authentication</param>
         /// <param name="password">The password for SMB authentication</param>
-        /// <param name="domain">The domain for SMB authentication</param>
+        /// <param name="domain">The optional domain for SMB authentication</param>
         /// <returns>The service collection for chaining</returns>
         public static IServiceCollection AddSmbSharp(this IServiceCollection services, string username, string password,
-            string domain)
+            string? domain = null)
         {
-            services.AddSingleton<IProcessWrapper>(sp =>
+            services.TryAddSingleton<IProcessWrapper>(sp =>
             {
                 var logger = sp.GetRequiredService<ILogger<ProcessWrapper>>();
                 return new ProcessWrapper(logger);
@@ -74,10 +75,13 @@ namespace SmbSharp.Extensions
         public static IServiceCollection AddSmbSharp(this IServiceCollection services,
             Action<SmbSharpOptions> configure)
         {
+            if (configure == null)
+                throw new ArgumentNullException(nameof(configure));
             var options = new SmbSharpOptions();
             configure(options);
+            ValidateOptions(options);
 
-            services.AddSingleton<IProcessWrapper>(sp =>
+            services.TryAddSingleton<IProcessWrapper>(sp =>
             {
                 var logger = sp.GetRequiredService<ILogger<ProcessWrapper>>();
                 return new ProcessWrapper(logger);
@@ -85,7 +89,7 @@ namespace SmbSharp.Extensions
 
             if (options.UseSessionPool)
             {
-                services.AddSingleton<IInteractiveProcessFactory>(sp =>
+                services.TryAddSingleton<IInteractiveProcessFactory>(sp =>
                     new InteractiveProcessFactory(sp.GetService<ILoggerFactory>()));
 
                 // Registered as a singleton (not scoped) so the pool - and its persistent, already
@@ -97,7 +101,9 @@ namespace SmbSharp.Extensions
                     var processFactory = sp.GetRequiredService<IInteractiveProcessFactory>();
                     return new SmbClientSessionPool(loggerFactory, processFactory, options.UseKerberos,
                         options.Username, options.Password, options.Domain, options.UseWsl,
-                        options.SessionPoolSize, options.SessionIdleTimeout);
+                        options.SessionPoolSize, options.SessionIdleTimeout,
+                        commandTimeout: options.SessionCommandTimeout,
+                        wslDistribution: options.WslDistribution);
                 });
             }
 
@@ -109,7 +115,7 @@ namespace SmbSharp.Extensions
                     var processWrapper = sp.GetRequiredService<IProcessWrapper>();
                     var sessionPool = options.UseSessionPool ? sp.GetRequiredService<ISmbClientSessionPool>() : null;
                     return new SmbClientFileHandler(logger, processWrapper, true, useWsl: options.UseWsl,
-                        sessionPool: sessionPool);
+                        sessionPool: sessionPool, wslDistribution: options.WslDistribution);
                 });
             }
             else
@@ -125,7 +131,7 @@ namespace SmbSharp.Extensions
                     var logger = sp.GetRequiredService<ILogger<SmbClientFileHandler>>();
                     var processWrapper = sp.GetRequiredService<IProcessWrapper>();
                     var sessionPool = options.UseSessionPool ? sp.GetRequiredService<ISmbClientSessionPool>() : null;
-                    return new SmbClientFileHandler(logger, processWrapper, false, options.Username, options.Password, options.Domain, useWsl: options.UseWsl, sessionPool: sessionPool);
+                    return new SmbClientFileHandler(logger, processWrapper, false, options.Username, options.Password, options.Domain, useWsl: options.UseWsl, sessionPool: sessionPool, wslDistribution: options.WslDistribution);
                 });
             }
 
@@ -142,51 +148,74 @@ namespace SmbSharp.Extensions
         /// Adds SmbSharp services to the DI container with custom configuration that has access to the service provider.
         /// </summary>
         /// <param name="services">The service collection</param>
-        /// <param name="configure">Configuration action that accepts the service provider and SmbSharp options</param>
+        /// <param name="configure">Configuration action that accepts the root service provider and SmbSharp options.
+        /// It runs once; resolve only singleton/root-safe dependencies.</param>
         /// <returns>The service collection for chaining</returns>
         public static IServiceCollection AddSmbSharp(this IServiceCollection services,
             Action<IServiceProvider, SmbSharpOptions> configure)
         {
-            services.AddSingleton<IProcessWrapper>(sp =>
+            if (configure == null)
+                throw new ArgumentNullException(nameof(configure));
+            services.TryAddSingleton<IProcessWrapper>(sp =>
             {
                 var logger = sp.GetRequiredService<ILogger<ProcessWrapper>>();
                 return new ProcessWrapper(logger);
             });
 
-            // We need to resolve options at scope-creation time, so store a reference for FileHandler too
-            var resolvedUseWsl = false;
-
-            services.AddScoped<ISmbClientFileHandler>(sp =>
+            services.AddSingleton(sp =>
             {
                 var options = new SmbSharpOptions();
                 configure(sp, options);
-                resolvedUseWsl = options.UseWsl;
+                ValidateOptions(options);
+                return options;
+            });
 
+            services.TryAddSingleton<IInteractiveProcessFactory>(sp =>
+                new InteractiveProcessFactory(sp.GetService<ILoggerFactory>()));
+            services.TryAddSingleton<ISmbClientSessionPool>(sp =>
+            {
+                var options = sp.GetRequiredService<SmbSharpOptions>();
+                if (!options.UseSessionPool)
+                    throw new InvalidOperationException("The SMB session pool is disabled in SmbSharpOptions.");
+                return new SmbClientSessionPool(sp.GetRequiredService<ILoggerFactory>(),
+                    sp.GetRequiredService<IInteractiveProcessFactory>(), options.UseKerberos,
+                    options.Username, options.Password, options.Domain, options.UseWsl,
+                    options.SessionPoolSize, options.SessionIdleTimeout,
+                    commandTimeout: options.SessionCommandTimeout, wslDistribution: options.WslDistribution);
+            });
+
+            services.AddScoped<ISmbClientFileHandler>(sp =>
+            {
+                var options = sp.GetRequiredService<SmbSharpOptions>();
                 var logger = sp.GetRequiredService<ILogger<SmbClientFileHandler>>();
                 var processWrapper = sp.GetRequiredService<IProcessWrapper>();
-
-                if (options.UseKerberos)
-                {
-                    return new SmbClientFileHandler(logger, processWrapper, true, useWsl: options.UseWsl);
-                }
-
-                if (string.IsNullOrEmpty(options.Username) || string.IsNullOrEmpty(options.Password))
-                {
-                    throw new ArgumentException(
-                        "Username and password are required when not using Kerberos authentication");
-                }
-
-                return new SmbClientFileHandler(logger, processWrapper, false, options.Username, options.Password, options.Domain, useWsl: options.UseWsl);
+                var pool = options.UseSessionPool ? sp.GetRequiredService<ISmbClientSessionPool>() : null;
+                return new SmbClientFileHandler(logger, processWrapper, options.UseKerberos,
+                    options.Username, options.Password, options.Domain, options.UseWsl, pool,
+                    options.WslDistribution);
             });
 
             services.AddScoped<IFileHandler>(sp =>
             {
-                // Resolve ISmbClientFileHandler first (which sets resolvedUseWsl)
+                var options = sp.GetRequiredService<SmbSharpOptions>();
                 var smbClientHandler = sp.GetRequiredService<ISmbClientFileHandler>();
                 var logger = sp.GetRequiredService<ILogger<FileHandler>>();
-                return new FileHandler(logger, smbClientHandler, resolvedUseWsl);
+                return new FileHandler(logger, smbClientHandler, options.UseWsl);
             });
             return services;
+        }
+
+        private static void ValidateOptions(SmbSharpOptions options)
+        {
+            if (!options.UseKerberos &&
+                (string.IsNullOrWhiteSpace(options.Username) || string.IsNullOrWhiteSpace(options.Password)))
+                throw new ArgumentException("Username and password are required when not using Kerberos authentication");
+            if (options.SessionPoolSize < 1)
+                throw new ArgumentOutOfRangeException(nameof(options.SessionPoolSize));
+            if (options.SessionIdleTimeout <= TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(options.SessionIdleTimeout));
+            if (options.SessionCommandTimeout <= TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(options.SessionCommandTimeout));
         }
 
         /// <summary>

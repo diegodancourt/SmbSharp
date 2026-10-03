@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace SmbSharp.Business.SmbClient.Session
 {
     /// <summary>
@@ -6,38 +8,42 @@ namespace SmbSharp.Business.SmbClient.Session
     /// </summary>
     internal static class SmbClientErrorClassifier
     {
+        private static readonly Regex StatusLineRegex =
+            new(@"(?:^\s*|(?:failed|error|status)\s+|:\s*)(NT_STATUS_[A-Z0-9_]+)(?:\s|$)",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
         /// <summary>
         /// Inspects command output for smbclient's known error signatures and throws the matching
         /// exception type. Does nothing if no known error signature is found.
         /// </summary>
         public static void ThrowIfKnownError(string output, string contextPath)
         {
-            var errorLower = output.ToLowerInvariant();
+            var statusCodes = output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.TrimEnd('\r'))
+                .Where(line => !Regex.IsMatch(line, @"^\s{2}.+\s{2,}[A-Z]+\s+\d+"))
+                .Select(line => StatusLineRegex.Match(line))
+                .Where(match => match.Success)
+                .Select(match => match.Groups[1].Value.ToUpperInvariant())
+                .ToHashSet(StringComparer.Ordinal);
 
-            if (errorLower.Contains("does not exist") ||
-                errorLower.Contains("not found") ||
-                errorLower.Contains("nt_status_object_name_not_found") ||
-                errorLower.Contains("nt_status_no_such_file"))
+            if (statusCodes.Overlaps(new[]
+                {
+                    "NT_STATUS_OBJECT_NAME_NOT_FOUND", "NT_STATUS_OBJECT_PATH_NOT_FOUND", "NT_STATUS_NO_SUCH_FILE"
+                }))
             {
-                throw new FileNotFoundException(
-                    $"The specified path was not found on {contextPath}", contextPath);
+                throw new FileNotFoundException($"The specified path was not found on {contextPath}: {output}", contextPath);
             }
 
-            if (errorLower.Contains("access denied") ||
-                errorLower.Contains("permission denied") ||
-                errorLower.Contains("nt_status_access_denied") ||
-                errorLower.Contains("nt_status_logon_failure") ||
-                errorLower.Contains("logon failure"))
+            if (statusCodes.Overlaps(new[] { "NT_STATUS_ACCESS_DENIED", "NT_STATUS_LOGON_FAILURE" }))
             {
                 throw new UnauthorizedAccessException($"Access denied to {contextPath}: {output}");
             }
 
-            if (errorLower.Contains("bad network path") ||
-                errorLower.Contains("network name not found") ||
-                errorLower.Contains("nt_status_bad_network_name"))
+            if (statusCodes.Contains("NT_STATUS_BAD_NETWORK_NAME"))
             {
-                throw new DirectoryNotFoundException($"The network path was not found: {contextPath}");
+                throw new DirectoryNotFoundException($"The network path was not found: {contextPath}: {output}");
             }
+
         }
     }
 }

@@ -1,4 +1,5 @@
 ﻿using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using SmbSharp.Business.Interfaces;
@@ -9,7 +10,7 @@ using SmbSharp.Models;
 
 namespace SmbSharp.Business.SmbClient
 {
-    internal class SmbClientFileHandler : ISmbClientFileHandler
+    internal class SmbClientFileHandler : ISmbClientFileHandler, ISmbClientFileHandlerMove
     {
         private readonly ILogger<SmbClientFileHandler> _logger;
         private readonly IProcessWrapper _processWrapper;
@@ -19,6 +20,7 @@ namespace SmbSharp.Business.SmbClient
         private readonly string? _username;
         private readonly string? _password;
         private readonly string? _domain;
+        private readonly string? _wslDistribution;
 
         private static readonly Regex SmbPathRegexInstance =
             new(@"^[/\\]{2}([^/\\]+)[/\\]([^/\\]+)(?:[/\\](.*))?$", RegexOptions.Compiled);
@@ -28,54 +30,43 @@ namespace SmbSharp.Business.SmbClient
         // Matches smbclient ls output lines: 2 leading spaces, filename (may contain spaces),
         // 2+ spaces separator, attribute flags (capital letters), then size digit
         private static readonly Regex SmbLsLineRegexInstance =
-            new(@"^\s{2}(.+?)\s{2,}([A-Z]+)\s+\d+", RegexOptions.Compiled);
+            new(@"^\s{2}(.+?)\s{2,}([A-Z]+)\s+\d+\s{2,}[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\b",
+                RegexOptions.Compiled);
 
-        // Cache for smbclient availability check
-        private static bool? _smbClientAvailable;
-        private static readonly object _smbClientCheckLock = new();
+        private bool _smbClientAvailable;
 
         public bool IsSmbClientAvailable()
         {
-            // Use cached result if available
-            if (_smbClientAvailable.HasValue)
-                return _smbClientAvailable.Value;
+            if (_smbClientAvailable)
+                return true;
 
-            lock (_smbClientCheckLock)
+            var args = new List<string>();
+            if (_useWsl)
             {
-                // Double-check after acquiring lock
-                if (_smbClientAvailable.HasValue)
-                    return _smbClientAvailable.Value;
-
-                try
-                {
-                    ProcessResult result;
-                    if (_useWsl)
-                    {
-                        // Check smbclient availability through WSL
-                        var args = new List<string> { "smbclient", "--version" };
-                        result = Task.Run(() => _processWrapper.ExecuteAsync("wsl", args)).Result;
-                    }
-                    else
-                    {
-                        result = Task.Run(() => _processWrapper.ExecuteAsync("smbclient", "--version")).Result;
-                    }
-
-                    _smbClientAvailable = result.ExitCode == 0;
-                    return _smbClientAvailable.Value;
-                }
-                catch
-                {
-                    _smbClientAvailable = false;
-                    return false;
-                }
+                AddWslDistribution(args);
+                args.Add("smbclient");
+            }
+            args.Add("--version");
+            var executable = _useWsl ? "wsl" : "smbclient";
+            try
+            {
+                var result = _processWrapper.ExecuteAsync(executable, args).GetAwaiter().GetResult();
+                _smbClientAvailable = result.ExitCode == 0;
+                return _smbClientAvailable;
+            }
+            catch (System.ComponentModel.Win32Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not start {executable} to check smbclient availability.", executable);
+                return false;
             }
         }
 
         public SmbClientFileHandler(ILogger<SmbClientFileHandler> logger, IProcessWrapper processWrapper,
             bool useKerberos, string? username = null, string? password = null,
-            string? domain = null, bool useWsl = false, ISmbClientSessionPool? sessionPool = null)
+            string? domain = null, bool useWsl = false, ISmbClientSessionPool? sessionPool = null,
+            string? wslDistribution = null)
         {
-            _logger = logger;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _processWrapper = processWrapper ?? throw new ArgumentNullException(nameof(processWrapper));
             _sessionPool = sessionPool;
             _useKerberos = useKerberos;
@@ -90,6 +81,7 @@ namespace SmbSharp.Business.SmbClient
             _username = username;
             _password = password;
             _domain = domain;
+            _wslDistribution = wslDistribution;
         }
 
         public async Task<IEnumerable<string>> EnumerateFilesAsync(string smbPath,
@@ -101,7 +93,7 @@ namespace SmbSharp.Business.SmbClient
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error enumerating files in SMB path: {SmbPath}", smbPath);
+                _logger.LogDebug(ex, "Error enumerating files in SMB path: {smbPath}", smbPath);
                 throw;
             }
         }
@@ -115,7 +107,7 @@ namespace SmbSharp.Business.SmbClient
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error enumerating directories in SMB path: {SmbPath}", smbPath);
+                _logger.LogDebug(ex, "Error enumerating directories in SMB path: {smbPath}", smbPath);
                 throw;
             }
         }
@@ -128,7 +120,9 @@ namespace SmbSharp.Business.SmbClient
             // Parse SMB path: //server/share/path or \\server\share\path
             var (server, share, path) = ParseSmbPath(smbPath);
 
-            var command = string.IsNullOrEmpty(path) ? "ls" : $"ls {path}/*";
+            var command = string.IsNullOrEmpty(path)
+                ? "ls"
+                : $"ls {SmbClientCommandBuilder.QuotePath(path, nameof(smbPath))}/*";
 
             string output;
             try
@@ -152,7 +146,7 @@ namespace SmbSharp.Business.SmbClient
                 if (line.Contains("blocks of size") || line.Contains("blocks available"))
                     continue;
 
-                var match = SmbLsLineRegexInstance.Match(line);
+                var match = MatchSmbLsLine(line);
                 if (!match.Success)
                     continue;
 
@@ -180,19 +174,17 @@ namespace SmbSharp.Business.SmbClient
             {
                 // Parse SMB path: //server/share/path or \\server\share\path
                 var (server, share, remotePath) = ParseSmbPath(smbPath);
+                SmbClientCommandBuilder.ValidateFileName(fileName, nameof(fileName));
+                var remoteFilePath = BuildRemoteFilePath(remotePath, fileName);
 
-                var remoteFilePath = string.IsNullOrEmpty(remotePath)
-                    ? fileName
-                    : $"{remotePath}/{fileName}";
-
-                var command = $"allinfo \"{remoteFilePath}\"";
+                var command = $"allinfo {SmbClientCommandBuilder.QuotePath(remoteFilePath, nameof(fileName))}";
                 var output = await ExecuteSmbClientCommandAsync(server, share, command, smbPath, cancellationToken);
 
                 return ParseAllInfoOutput(output);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving file info for {FileName} in {SmbPath}", fileName, smbPath);
+                _logger.LogDebug(ex, "Error retrieving file info for {fileName} in {smbPath}", fileName, smbPath);
                 throw;
             }
         }
@@ -299,42 +291,66 @@ namespace SmbSharp.Business.SmbClient
         {
             try
             {
-                var files = await EnumerateFilesAsync(smbPath, cancellationToken);
-                return files.Any(f => f.Equals(fileName, StringComparison.OrdinalIgnoreCase));
+                SmbClientCommandBuilder.ValidateFileName(fileName, nameof(fileName));
+                var (server, share, remotePath) = ParseSmbPath(smbPath);
+                var remoteFilePath = BuildRemoteFilePath(remotePath, fileName);
+                var command = $"ls {SmbClientCommandBuilder.QuotePath(remoteFilePath, nameof(fileName))}";
+                try
+                {
+                    var output = await ExecuteSmbClientCommandAsync(server, share, command, smbPath, cancellationToken);
+                    return output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                        .Select(MatchSmbLsLine)
+                        .Where(match => match.Success)
+                        .Any(match => match.Groups[1].Value.Equals(fileName, StringComparison.OrdinalIgnoreCase) &&
+                                      !match.Groups[2].Value.Contains('D'));
+                }
+                catch (FileNotFoundException)
+                {
+                    if (!string.IsNullOrEmpty(remotePath))
+                        await ExecuteSmbClientCommandAsync(server, share,
+                            $"ls {SmbClientCommandBuilder.QuotePath(remotePath, nameof(smbPath))}",
+                            smbPath, cancellationToken);
+                    return false;
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error checking if file exists: {FileName} in {SmbPath}", fileName, smbPath);
+                _logger.LogDebug(ex, "Error checking if file exists: {fileName} in {smbPath}", fileName, smbPath);
                 throw;
             }
         }
+
+        private static Match MatchSmbLsLine(string line) =>
+            SmbLsLineRegexInstance.Match(line.TrimStart('\r'));
 
         public async Task<Stream> GetFileStreamAsync(string smbPath, string fileName,
             CancellationToken cancellationToken = default)
         {
             // Parse SMB path: //server/share/path or \\server\share\path
             var (server, share, remotePath) = ParseSmbPath(smbPath);
-
-            // Create a temporary local file
-            var tempFilePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}_{fileName}");
-
-            // Download file using smbclient
-            var remoteFilePath = string.IsNullOrEmpty(remotePath)
-                ? fileName
-                : $"{remotePath}/{fileName}";
-
-            var command = $"get \"{remoteFilePath}\" \"{tempFilePath}\"";
-            await ExecuteSmbClientCommandAsync(server, share, command, smbPath, cancellationToken);
-
-            if (!File.Exists(tempFilePath))
+            SmbClientCommandBuilder.ValidateFileName(fileName, nameof(fileName));
+            var (tempDirectory, tempFilePath) = await CreatePrivateTempFileAsync(cancellationToken);
+            try
             {
-                throw new FileNotFoundException(
-                    $"Failed to download file {fileName} from {smbPath}");
-            }
+                var remoteFilePath = BuildRemoteFilePath(remotePath, fileName);
+                var command = $"get {SmbClientCommandBuilder.QuotePath(remoteFilePath, nameof(fileName))} {SmbClientCommandBuilder.QuotePath(tempFilePath, nameof(tempFilePath))}";
+                await ExecuteSmbClientCommandAsync(server, share, command, smbPath, cancellationToken);
 
-            // Return a FileStream with DeleteOnClose option to auto-cleanup temp file
-            return new FileStream(tempFilePath, FileMode.Open, FileAccess.Read, FileShare.None, 4096,
-                FileOptions.DeleteOnClose | FileOptions.Asynchronous);
+                for (var attempt = 0; attempt < 20 && !File.Exists(tempFilePath); attempt++)
+                    await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+
+                if (!File.Exists(tempFilePath))
+                    throw new FileNotFoundException($"Failed to download file {fileName} from {smbPath}");
+
+                var fileStream = new FileStream(tempFilePath, FileMode.Open, FileAccess.Read, FileShare.None, 4096,
+                    FileOptions.DeleteOnClose | FileOptions.Asynchronous);
+                return new TemporaryDirectoryStream(fileStream, tempDirectory);
+            }
+            catch
+            {
+                DeleteTemporaryDirectory(tempDirectory);
+                throw;
+            }
         }
 
         public async Task<bool> WriteFileAsync(string smbPath, string fileName, Stream stream,
@@ -348,15 +364,13 @@ namespace SmbSharp.Business.SmbClient
         {
             // Parse SMB path: //server/share/path or \\server\share\path
             var (server, share, remotePath) = ParseSmbPath(smbPath);
+            SmbClientCommandBuilder.ValidateFileName(fileName, nameof(fileName));
 
-            // Create a temporary local file to upload
-            var tempFilePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}_{fileName}");
+            var (tempDirectory, tempFilePath) = await CreatePrivateTempFileAsync(cancellationToken);
 
             try
             {
-                var remoteFilePath = string.IsNullOrEmpty(remotePath)
-                    ? fileName
-                    : $"{remotePath}/{fileName}";
+                var remoteFilePath = BuildRemoteFilePath(remotePath, fileName);
 
                 // Handle different write modes
                 if (writeMode == FileWriteMode.CreateNew)
@@ -364,7 +378,7 @@ namespace SmbSharp.Business.SmbClient
                     // Check if file exists first
                     try
                     {
-                        var checkCommand = $"ls \"{remoteFilePath}\"";
+                        var checkCommand = $"ls {SmbClientCommandBuilder.QuotePath(remoteFilePath, nameof(fileName))}";
                         await ExecuteSmbClientCommandAsync(server, share, checkCommand, smbPath, cancellationToken);
                         // If we get here, file exists
                         throw new IOException($"File already exists: {smbPath}/{fileName}");
@@ -377,11 +391,10 @@ namespace SmbSharp.Business.SmbClient
                 else if (writeMode == FileWriteMode.Append)
                 {
                     // For append mode, download existing file first if it exists
+                    var existingTempFile = Path.Combine(tempDirectory, $"smbsharp_{Guid.NewGuid():N}.tmp");
                     try
                     {
-                        var existingTempFile =
-                            Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}_existing_{fileName}");
-                        var getCommand = $"get \"{remoteFilePath}\" \"{existingTempFile}\"";
+                        var getCommand = $"get {SmbClientCommandBuilder.QuotePath(remoteFilePath, nameof(fileName))} {SmbClientCommandBuilder.QuotePath(existingTempFile, nameof(existingTempFile))}";
                         await ExecuteSmbClientCommandAsync(server, share, getCommand, smbPath, cancellationToken);
 
                         // Copy existing file to temp file, then append new content
@@ -396,9 +409,6 @@ namespace SmbSharp.Business.SmbClient
                             await stream.CopyToAsync(fileStream, cancellationToken);
                         }
 
-                        // Clean up existing temp file
-                        if (File.Exists(existingTempFile))
-                            File.Delete(existingTempFile);
                     }
                     catch (FileNotFoundException)
                     {
@@ -415,36 +425,62 @@ namespace SmbSharp.Business.SmbClient
                 }
 
                 // Upload file using smbclient
-                var command = $"put \"{tempFilePath}\" \"{remoteFilePath}\"";
+                var command = $"put {SmbClientCommandBuilder.QuotePath(tempFilePath, nameof(tempFilePath))} {SmbClientCommandBuilder.QuotePath(remoteFilePath, nameof(fileName))}";
                 await ExecuteSmbClientCommandAsync(server, share, command, smbPath, cancellationToken);
 
                 return true;
             }
             finally
             {
-                // Clean up temp file
-                if (File.Exists(tempFilePath))
-                {
-                    File.Delete(tempFilePath);
-                }
+                DeleteTemporaryDirectory(tempDirectory);
             }
         }
 
         public async Task<bool> DeleteFileAsync(string smbPath, string fileName,
             CancellationToken cancellationToken = default)
         {
+            SmbClientCommandBuilder.ValidateFileName(fileName, nameof(fileName));
             // Parse SMB path: //server/share/path or \\server\share\path
             var (server, share, remotePath) = ParseSmbPath(smbPath);
 
             // Delete file using smbclient
-            var remoteFilePath = string.IsNullOrEmpty(remotePath)
-                ? fileName
-                : $"{remotePath}/{fileName}";
+            var remoteFilePath = BuildRemoteFilePath(remotePath, fileName);
 
-            var command = $"del \"{remoteFilePath}\"";
-            await ExecuteSmbClientCommandAsync(server, share, command, smbPath, cancellationToken);
+            var command = $"del {SmbClientCommandBuilder.QuotePath(remoteFilePath, nameof(fileName))}";
+            try
+            {
+                await ExecuteSmbClientCommandAsync(server, share, command, smbPath, cancellationToken);
+            }
+            catch (FileNotFoundException)
+            {
+                // DeleteFileAsync is intentionally idempotent and matches the native-path contract.
+            }
 
             return true;
+        }
+
+        public async Task RenameFileAsync(string sourceDirectory, string sourceFileName, string destinationDirectory,
+            string destinationFileName, CancellationToken cancellationToken)
+        {
+            SmbClientCommandBuilder.ValidateFileName(sourceFileName, nameof(sourceFileName));
+            SmbClientCommandBuilder.ValidateFileName(destinationFileName, nameof(destinationFileName));
+            var (sourceServer, sourceShare, sourcePath) = ParseSmbPath(sourceDirectory);
+            var (destinationServer, destinationShare, destinationPath) = ParseSmbPath(destinationDirectory);
+            if (!sourceServer.Equals(destinationServer, StringComparison.OrdinalIgnoreCase) ||
+                !sourceShare.Equals(destinationShare, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("Server-side rename requires both paths to use the same SMB share.");
+
+            var source = BuildRemoteFilePath(sourcePath, sourceFileName);
+            var destination = BuildRemoteFilePath(destinationPath, destinationFileName);
+            var output = await ExecuteSmbClientCommandAsync(sourceServer, sourceShare,
+                $"rename {SmbClientCommandBuilder.QuotePath(source, nameof(sourceFileName))} {SmbClientCommandBuilder.QuotePath(destination, nameof(destinationFileName))}",
+                sourceDirectory, cancellationToken);
+
+            if (output.Contains("NT_STATUS_OBJECT_NAME_COLLISION", StringComparison.OrdinalIgnoreCase) ||
+                output.Contains("NT_STATUS_OBJECT_NAME_EXISTS", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new IOException($"The destination already exists on {sourceDirectory}: {output}");
+            }
         }
 
         public async Task<bool> CreateDirectoryAsync(string smbPath, CancellationToken cancellationToken = default)
@@ -460,7 +496,7 @@ namespace SmbSharp.Business.SmbClient
             // Check if directory already exists to make this operation idempotent (consistent with Windows behavior)
             try
             {
-                var checkCommand = $"ls \"{remotePath}\"";
+                var checkCommand = $"ls {SmbClientCommandBuilder.QuotePath(remotePath, nameof(smbPath))}";
                 await ExecuteSmbClientCommandAsync(server, share, checkCommand, smbPath, cancellationToken);
                 // If we reach here, the directory exists - return true (idempotent behavior)
                 return true;
@@ -470,7 +506,7 @@ namespace SmbSharp.Business.SmbClient
                 // Directory doesn't exist, proceed to create it
             }
 
-            var command = $"mkdir \"{remotePath}\"";
+            var command = $"mkdir {SmbClientCommandBuilder.QuotePath(remotePath, nameof(smbPath))}";
             await ExecuteSmbClientCommandAsync(server, share, command, smbPath, cancellationToken);
 
             return true;
@@ -487,131 +523,66 @@ namespace SmbSharp.Business.SmbClient
                 return await _sessionPool.ExecuteAsync(server, share, command, contextPath, cancellationToken);
             }
 
-            string? credentialsFile = null;
+            var argumentList = new List<string>();
 
-            try
+            // When using WSL, prepend "smbclient" as the first argument (wsl will be the executable)
+            if (_useWsl)
             {
-                var argumentList = new List<string>();
+                AddWslDistribution(argumentList);
+                argumentList.Add("smbclient");
+            }
 
-                // When using WSL, prepend "smbclient" as the first argument (wsl will be the executable)
+            // Add server/share
+            argumentList.Add($"//{server}/{share}");
+
+            if (_useKerberos)
+            {
+                // Use Kerberos authentication (kinit ticket)
+                argumentList.Add("--use-kerberos=required");
+            }
+            else
+            {
+                // Skip smbclient's default Kerberos-first attempt (see SmbClientSession for details).
+                argumentList.Add("--use-kerberos=off");
+
+                // PASSWD is supplied only to the child process environment; it is never put in argv or a file.
+                var username = string.IsNullOrEmpty(_domain)
+                    ? _username ?? string.Empty
+                    : $"{_domain}\\{_username}";
+                argumentList.Add("-U");
+                argumentList.Add(username);
+            }
+
+            // Add command (convert any Windows paths in the command for WSL)
+            argumentList.Add("-c");
+            argumentList.Add(_useWsl ? ConvertWindowsPathsInCommand(command) : command);
+
+            var executable = _useWsl ? "wsl" : "smbclient";
+            IDictionary<string, string>? environmentVariables = null;
+            if (!_useKerberos)
+            {
+                environmentVariables = new Dictionary<string, string> { ["PASSWD"] = _password ?? string.Empty };
                 if (_useWsl)
                 {
-                    argumentList.Add("smbclient");
+                    environmentVariables["TERM"] = "dumb";
+                    AddWslEnvironment(environmentVariables);
                 }
-
-                // Add server/share
-                argumentList.Add($"//{server}/{share}");
-
-                if (_useKerberos)
-                {
-                    // Use Kerberos authentication (kinit ticket)
-                    argumentList.Add("--use-kerberos=required");
-                }
-                else
-                {
-                    // Skip smbclient's default Kerberos-first attempt (see SmbClientSession for details).
-                    argumentList.Add("--use-kerberos=off");
-
-                    // Use username/password authentication via credentials file
-                    var username = string.IsNullOrEmpty(_domain)
-                        ? _username ?? string.Empty
-                        : $"{_domain}\\{_username}";
-
-                    // Create temporary credentials file
-                    credentialsFile = Path.Combine(Path.GetTempPath(), $"smb_{Guid.NewGuid():N}.creds");
-                    await File.WriteAllTextAsync(credentialsFile,
-                        $"username={username}\npassword={_password}\n",
-                        cancellationToken);
-
-                    try
-                    {
-                        if (_useWsl)
-                        {
-                            var chmodArgs = new List<string> { "chmod", "600", ConvertToWslPath(credentialsFile) };
-                            await _processWrapper.ExecuteAsync("wsl", chmodArgs, null, cancellationToken);
-                        }
-                        else
-                        {
-                            var chmodArgs = new List<string> { "600", credentialsFile };
-                            await _processWrapper.ExecuteAsync("chmod", chmodArgs, null, cancellationToken);
-                        }
-                    }
-                    catch (Exception e)
-                    {
-                        _logger.LogWarning(e, "Failed to set permissions on SMB credentials file.");
-                    }
-
-                    // Use credentials file (convert path for WSL if needed)
-                    argumentList.Add("-A");
-                    argumentList.Add(_useWsl ? ConvertToWslPath(credentialsFile) : credentialsFile);
-                }
-
-                // Add command (convert any Windows paths in the command for WSL)
-                argumentList.Add("-c");
-                argumentList.Add(_useWsl ? ConvertWindowsPathsInCommand(command) : command);
-
-                var executable = _useWsl ? "wsl" : "smbclient";
-                var result = await _processWrapper.ExecuteAsync(executable, argumentList, null, cancellationToken);
-
-                if (result.ExitCode == 0)
-                {
-                    return result.StandardOutput;
-                }
-
-                // Try to differentiate error types based on smbclient error messages
-                // Check both stdout and stderr as smbclient can output errors to either
-                var errorOutput = $"{result.StandardOutput} {result.StandardError}";
-                var errorLower = errorOutput.ToLowerInvariant();
-
-                if (errorLower.Contains("does not exist") ||
-                    errorLower.Contains("not found") ||
-                    errorLower.Contains("nt_status_object_name_not_found") ||
-                    errorLower.Contains("nt_status_no_such_file"))
-                {
-                    throw new FileNotFoundException(
-                        $"The specified path was not found on {contextPath}", contextPath);
-                }
-
-                if (errorLower.Contains("access denied") ||
-                    errorLower.Contains("permission denied") ||
-                    errorLower.Contains("nt_status_access_denied") ||
-                    errorLower.Contains("logon failure"))
-                {
-                    throw new UnauthorizedAccessException(
-                        $"Access denied to {contextPath}: {result.StandardError}");
-                }
-
-                if (errorLower.Contains("bad network path") ||
-                    errorLower.Contains("network name not found") ||
-                    errorLower.Contains("nt_status_bad_network_name"))
-                {
-                    throw new DirectoryNotFoundException(
-                        $"The network path was not found: {contextPath}");
-                }
-
-                // Generic error for everything else
-                throw new IOException(
-                    $"Failed to execute smbclient command on {contextPath}: {result.StandardError}");
             }
-            finally
+            var result = await _processWrapper.ExecuteAsync(executable, argumentList, environmentVariables, cancellationToken);
+
+            if (result.ExitCode == 0)
             {
-                // Clean up credentials file
-                if (credentialsFile != null)
-                {
-                    try
-                    {
-                        File.Delete(credentialsFile);
-                    }
-                    catch
-                    {
-                        // Ignore cleanup errors
-                    }
-                }
+                return result.StandardOutput;
             }
+
+            SmbClientErrorClassifier.ThrowIfKnownError(
+                $"{result.StandardOutput}\n{result.StandardError}", contextPath);
+            throw new IOException($"Failed to execute smbclient command on {contextPath}: {result.StandardOutput} {result.StandardError}");
         }
 
         private static (string server, string share, string path) ParseSmbPath(string smbPath)
         {
+            SmbClientCommandBuilder.ValidatePath(smbPath, nameof(smbPath));
             // Parse SMB path: //server/share/path or \\server\share\path
             var match = SmbPathRegexInstance.Match(smbPath);
             if (!match.Success)
@@ -622,6 +593,10 @@ namespace SmbSharp.Business.SmbClient
             var server = match.Groups[1].Value;
             var share = match.Groups[2].Value;
             var path = match.Groups[3].Success ? match.Groups[3].Value.Replace('\\', '/') : "";
+            SmbClientCommandBuilder.ValidatePath(server, nameof(smbPath));
+            SmbClientCommandBuilder.ValidatePath(share, nameof(smbPath));
+            if (!string.IsNullOrEmpty(path))
+                SmbClientCommandBuilder.ValidatePath(path, nameof(smbPath));
 
             return (server, share, path);
         }
@@ -638,9 +613,11 @@ namespace SmbSharp.Business.SmbClient
                 // "cd" permanently changes that pooled session's working directory for every future
                 // command that happens to reuse the same slot - other unrelated relative-path commands
                 // (e.g. EnumerateFilesAsync's "ls {path}/*") would then resolve against the wrong
-                // directory and silently find nothing. Use an absolute (leading "/") path instead, which
-                // is always resolved from the share root regardless of the session's current directory.
-                var command = string.IsNullOrEmpty(path) ? "ls \"/\"" : $"ls \"/{path}\"";
+                // directory and silently find nothing. Resolve the path relative to the share root;
+                // smbclient does not treat a leading slash as a valid absolute path for ls.
+                var command = string.IsNullOrEmpty(path)
+                    ? "ls"
+                    : $"ls {SmbClientCommandBuilder.QuotePath(path, nameof(directoryPath))}";
                 await ExecuteSmbClientCommandAsync(server, share, command, directoryPath, cancellationToken);
 
                 return true;
@@ -651,13 +628,70 @@ namespace SmbSharp.Business.SmbClient
                 // checks, only care about success/failure), but swallowing the exception entirely left
                 // no diagnostic trail when this fails in production. Log it so the real cause (auth
                 // failure, timeout, broken session, etc.) is visible without changing the return contract.
-                _logger.LogWarning(ex, "SMB connectivity check failed for {DirectoryPath}", directoryPath);
+                _logger.LogWarning(ex, "SMB connectivity check failed for {directoryPath}", directoryPath);
                 return false;
             }
         }
 
         private static string ConvertToWslPath(string windowsPath) =>
             SmbClientPathUtil.ConvertToWslPath(windowsPath);
+
+        private static string BuildRemoteFilePath(string remotePath, string fileName) =>
+            string.IsNullOrEmpty(remotePath) ? fileName : $"{remotePath}/{fileName}";
+
+        private async Task<(string directory, string filePath)> CreatePrivateTempFileAsync(
+            CancellationToken cancellationToken)
+        {
+            var directory = Path.Combine(Path.GetTempPath(), $"smbsharp_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(directory);
+            try
+            {
+                if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                {
+#if NET7_0_OR_GREATER
+                    File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite |
+                        UnixFileMode.UserExecute);
+#else
+                    var result = await _processWrapper.ExecuteAsync("chmod",
+                        new[] { "700", directory }, null, cancellationToken);
+                    if (result.ExitCode != 0)
+                        throw new IOException($"Unable to restrict permissions on temporary SMB directory: {result.StandardError}");
+#endif
+                }
+                return (directory, Path.Combine(directory, $"smbsharp_{Guid.NewGuid():N}.tmp"));
+            }
+            catch
+            {
+                DeleteTemporaryDirectory(directory);
+                throw;
+            }
+        }
+
+        private static void DeleteTemporaryDirectory(string directory)
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+
+        private static void AddWslEnvironment(IDictionary<string, string> environment)
+        {
+            var entries = (Environment.GetEnvironmentVariable("WSLENV") ?? string.Empty)
+                .Split(':', StringSplitOptions.RemoveEmptyEntries)
+                .Where(entry => !entry.Split('/')[0].Equals("TERM", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (!entries.Any(entry => entry.Equals("PASSWD/u", StringComparison.OrdinalIgnoreCase)))
+                entries.Add("PASSWD/u");
+            entries.Add("TERM/u");
+            environment["WSLENV"] = string.Join(':', entries);
+        }
+
+        private void AddWslDistribution(ICollection<string> arguments)
+        {
+            if (string.IsNullOrWhiteSpace(_wslDistribution))
+                return;
+            arguments.Add("-d");
+            arguments.Add(_wslDistribution);
+        }
 
         private static string ConvertWindowsPathsInCommand(string command) =>
             SmbClientPathUtil.ConvertWindowsPathsInCommand(command);

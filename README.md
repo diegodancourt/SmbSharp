@@ -322,7 +322,7 @@ await fileHandler.MoveFileAsync(
 );
 ```
 
-> **Note:** On Linux/macOS (and Windows with WSL), move operations download and re-upload the file, which can be slow for large files. The operation is atomic with automatic retry logic - if the source deletion fails after copying, it retries once before rolling back the destination to maintain consistency.
+> **Note:** Same-share Linux/macOS (and Windows with WSL) moves use a server-side rename. Cross-share moves copy and then delete; they use create-new destination semantics. If source deletion fails, both copies may remain rather than risking data loss.
 
 ### Create a Directory
 ```csharp
@@ -369,9 +369,12 @@ klist
 ```
 
 ### Username/Password Authentication
-Credentials are passed to smbclient via a temporary credentials file (`-A`), not command-line
-arguments. SmbSharp attempts to restrict the file permissions to owner-only access and removes
-the file when the one-shot operation or persistent session is disposed.
+Credentials are passed to smbclient via the `PASSWD` child-process environment variable; the
+password is not written to a credentials file or placed in command-line arguments. For WSL,
+SmbSharp adds `PASSWD/u` to `WSLENV` so WSL imports the value as a Unicode environment variable.
+The password is available to the smbclient process and its children while they run.
+The temporary transfer directory on Windows uses the current user's Windows temp-directory ACL;
+Unix mode-bit confidentiality is not guaranteed for WSL DrvFs mounts.
 
 On the smbclient path, username/password authentication explicitly disables Kerberos
 (`--use-kerberos=off`) to avoid Kerberos discovery delays before NTLM fallback. Explicit
@@ -393,26 +396,40 @@ Setting `UseSessionPool = true` (or passing `useSessionPool: true` to `FileHandl
 - Each session initialization has a 30-second timeout. Broken connections and initialization
   timeouts are retried up to three total attempts with exponential backoff and jitter, starting
   at a one-second delay. Recognized authentication, permission, and missing-path errors are not
-  retried. Failed initialization attempts dispose the process and temporary credentials file
-  and leave the pool slot available for subsequent calls.
+  retried. Failed initialization attempts dispose the process and leave the pool slot available
+  for subsequent calls.
 - Successful session establishment is logged at Information level with its duration in
   milliseconds.
-- If a session dies mid-operation (e.g. network blip, idle server-side timeout), it is
-  transparently recreated and the operation is retried once.
+- A command timeout (default two minutes) or cancellation terminates the interactive process so
+  unread output cannot contaminate a later command. Commands are not automatically replayed
+  after dispatch because the result of an interrupted write may be uncertain.
 - Idle sessions are evicted and disposed after `SessionIdleTimeout` to avoid holding stale
   connections open indefinitely.
 - This option only affects the smbclient path; on native Windows (UNC paths, no WSL), each call is
   already a direct file-system operation with no process-spawn or handshake cost, so pooling is a
   no-op there.
 
-Under the hood, session-pooled connections invoke `smbclient` through `script -qec "<command>"
-/dev/null` rather than directly. This is required because `smbclient` only prints its interactive
+Under the hood, session-pooled connections invoke `smbclient` through `script` rather than directly.
+On Linux, SmbSharp uses the util-linux `script -qec "<command>" /dev/null` form; on macOS it uses
+the BSD `script -q /dev/null sh -c "<command>"` form. This is required because `smbclient` only prints its interactive
 `smb: \>` prompt when its stdin is attached to a real TTY - a plain piped/redirected invocation
 (the only kind possible from .NET's `Process` class) never produces a prompt at all, which the
 persistent session relies on to know a command has finished. Wrapping with `script` allocates a
-pseudo-terminal so the prompt is emitted as expected. This requires the `script` utility (part of
-`util-linux`, already present on essentially all Linux distributions and macOS) to be available
-wherever `smbclient` runs, including inside WSL if `UseWsl` is also enabled.
+pseudo-terminal so the prompt is emitted as expected. A compatible `script` utility must be
+available wherever `smbclient` runs, including inside WSL if `UseWsl` is enabled. Minimal Linux
+images may ship a different implementation; pooling requires a util-linux-compatible implementation.
+The macOS command form is supported but has not been validated against every OS release.
+
+On Windows with WSL, set `WslDistribution` to select a named distro; null uses the user's default
+distribution. The same selection is used for pooled and one-shot smbclient execution.
+
+`FileHandler` instances created with `useSessionPool: true` implement `IDisposable`; dispose them
+when finished to release their persistent smbclient sessions. DI-managed pools are disposed by the
+service provider.
+
+On native Windows UNC paths, cancellation is checked before blocking filesystem calls begin, but
+the operating system may not interrupt a UNC call already in progress. Such a call can continue
+until the underlying filesystem operation returns.
 
 ## Health Checks
 
@@ -600,7 +617,7 @@ Process exited with code: 0
 ### Windows
 - Uses native UNC paths - very efficient
 - All operations are direct file system calls
-- Move operations are atomic and instant (metadata-only)
+- Same-volume moves use native `File.Move` and update directory metadata without copying file contents
 
 ### Linux / macOS / Windows (WSL)
 - Uses smbclient subprocess - some overhead

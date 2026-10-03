@@ -7,4 +7,5 @@ riderModule.iml
 .claude
 TestResults
 *.user
+debug-commands.txt
 nupkg/

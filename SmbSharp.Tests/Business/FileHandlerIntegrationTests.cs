@@ -3,6 +3,7 @@ using Moq;
 using SmbSharp.Business;
 using SmbSharp.Business.Interfaces;
 using SmbSharp.Enums;
+using SmbSharp.Tests.Util;
 
 namespace SmbSharp.Tests.Business
 {
@@ -59,15 +60,9 @@ namespace SmbSharp.Tests.Business
             return _handler;
         }
 
-        [Fact]
+        [WindowsFact]
         public async Task WriteFileAsync_String_CreatesFile()
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                // Skip on non-Windows as it requires smbclient
-                return;
-            }
-
             // Arrange
             var handler = CreateHandler();
             var testFile = Path.Combine(_testDirectory, "test.txt");
@@ -83,14 +78,9 @@ namespace SmbSharp.Tests.Business
             Assert.Equal(content, actualContent);
         }
 
-        [Fact]
+        [WindowsFact]
         public async Task WriteFileAsync_Stream_CreatesFile()
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return;
-            }
-
             // Arrange
             var handler = CreateHandler();
             var testFile = Path.Combine(_testDirectory, "test.txt");
@@ -107,14 +97,9 @@ namespace SmbSharp.Tests.Business
             Assert.Equal(content, actualContent);
         }
 
-        [Fact]
+        [WindowsFact]
         public async Task WriteFileAsync_OverwriteMode_OverwritesExistingFile()
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return;
-            }
-
             // Arrange
             var handler = CreateHandler();
             var testFile = Path.Combine(_testDirectory, "test.txt");
@@ -132,14 +117,9 @@ namespace SmbSharp.Tests.Business
             Assert.Equal(newContent, actualContent);
         }
 
-        [Fact]
+        [WindowsFact]
         public async Task WriteFileAsync_CreateNewMode_ThrowsIfFileExists()
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return;
-            }
-
             // Arrange
             var handler = CreateHandler();
             var testFile = Path.Combine(_testDirectory, "test.txt");
@@ -153,14 +133,9 @@ namespace SmbSharp.Tests.Business
                 handler.WriteFileAsync(testFile, stream, FileWriteMode.CreateNew));
         }
 
-        [Fact]
+        [WindowsFact]
         public async Task WriteFileAsync_CreateNewMode_SucceedsIfFileDoesNotExist()
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return;
-            }
-
             // Arrange
             var handler = CreateHandler();
             var testFile = Path.Combine(_testDirectory, "newfile.txt");
@@ -177,14 +152,9 @@ namespace SmbSharp.Tests.Business
             Assert.Equal(content, actualContent);
         }
 
-        [Fact]
+        [WindowsFact]
         public async Task WriteFileAsync_AppendMode_AppendsToExistingFile()
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return;
-            }
-
             // Arrange
             var handler = CreateHandler();
             var testFile = Path.Combine(_testDirectory, "test.txt");
@@ -203,14 +173,9 @@ namespace SmbSharp.Tests.Business
             Assert.Equal(originalContent + appendContent, actualContent);
         }
 
-        [Fact]
+        [WindowsFact]
         public async Task ReadFileAsync_ReadsExistingFile()
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return;
-            }
-
             // Arrange
             var handler = CreateHandler();
             var testFile = Path.Combine(_testDirectory, "read.txt");
@@ -229,14 +194,9 @@ namespace SmbSharp.Tests.Business
             Assert.Equal(content, actualContent);
         }
 
-        [Fact]
+        [WindowsFact]
         public async Task ReadFileAsync_NonExistentFile_ThrowsFileNotFoundException()
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return;
-            }
-
             // Arrange
             var handler = CreateHandler();
 
@@ -245,14 +205,9 @@ namespace SmbSharp.Tests.Business
                 handler.ReadFileAsync(_testDirectory, "nonexistent.txt"));
         }
 
-        [Fact]
+        [WindowsFact]
         public async Task DeleteFileAsync_DeletesExistingFile()
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return;
-            }
-
             // Arrange
             var handler = CreateHandler();
             var testFile = Path.Combine(_testDirectory, "todelete.txt");
@@ -266,14 +221,9 @@ namespace SmbSharp.Tests.Business
             Assert.False(File.Exists(testFile));
         }
 
-        [Fact]
+        [WindowsFact]
         public async Task DeleteFileAsync_NonExistentFile_DoesNotThrow()
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return;
-            }
-
             // Arrange
             var handler = CreateHandler();
             var testFile = Path.Combine(_testDirectory, "nonexistent.txt");
@@ -285,14 +235,9 @@ namespace SmbSharp.Tests.Business
             Assert.True(result);
         }
 
-        [Fact]
+        [WindowsFact]
         public async Task MoveFileAsync_MovesFile()
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return;
-            }
-
             // Arrange
             var handler = CreateHandler();
             var sourceFile = Path.Combine(_testDirectory, "source.txt");
@@ -311,14 +256,9 @@ namespace SmbSharp.Tests.Business
             Assert.Equal(content, actualContent);
         }
 
-        [Fact]
+        [WindowsFact]
         public async Task CreateDirectoryAsync_CreatesDirectory()
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return;
-            }
-
             // Arrange
             var handler = CreateHandler();
             var newDir = Path.Combine(_testDirectory, "subdir");
@@ -331,14 +271,9 @@ namespace SmbSharp.Tests.Business
             Assert.True(Directory.Exists(newDir));
         }
 
-        [Fact]
+        [WindowsFact]
         public async Task CreateDirectoryAsync_ExistingDirectory_DoesNotThrow()
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return;
-            }
-
             // Arrange
             var handler = CreateHandler();
             var newDir = Path.Combine(_testDirectory, "existingdir");
@@ -352,14 +287,9 @@ namespace SmbSharp.Tests.Business
             Assert.True(Directory.Exists(newDir));
         }
 
-        [Fact]
+        [WindowsFact]
         public async Task EnumerateFilesAsync_ReturnsFileNames()
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return;
-            }
-
             // Arrange
             var handler = CreateHandler();
             await File.WriteAllTextAsync(Path.Combine(_testDirectory, "file1.txt"), "content1");
@@ -378,14 +308,9 @@ namespace SmbSharp.Tests.Business
             Assert.Contains("file3.doc", fileList);
         }
 
-        [Fact]
+        [WindowsFact]
         public async Task EnumerateFilesAsync_EmptyDirectory_ReturnsEmpty()
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return;
-            }
-
             // Arrange
             var handler = CreateHandler();
             var emptyDir = Path.Combine(_testDirectory, "emptydir");
@@ -398,14 +323,9 @@ namespace SmbSharp.Tests.Business
             Assert.Empty(files);
         }
 
-        [Fact]
+        [WindowsFact]
         public async Task EnumerateFilesAsync_NonExistentDirectory_ThrowsDirectoryNotFoundException()
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return;
-            }
-
             // Arrange
             var handler = CreateHandler();
             var nonExistentDir = Path.Combine(_testDirectory, "nonexistent");

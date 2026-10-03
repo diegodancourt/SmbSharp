@@ -9,7 +9,7 @@ namespace SmbSharp.Business.SmbClient.Session
     {
         /// <summary>
         /// Runs a single smbclient command against a pooled, persistent session for the given share.
-        /// Transparently recreates and retries once if the selected session died mid-operation.
+        /// Does not replay a command after dispatch because the outcome of an interrupted write can be uncertain.
         /// </summary>
         Task<string> ExecuteAsync(string server, string share, string command, string contextPath,
             CancellationToken cancellationToken = default);

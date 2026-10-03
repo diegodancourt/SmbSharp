@@ -9,9 +9,8 @@
         <LangVersion>latest</LangVersion>
 
         <!-- NuGet Package Configuration -->
-        <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <PackageId>SmbSharp</PackageId>
-        <Version>2.0.1</Version>
+        <Version>2.1.0</Version>
         <Authors>Diego Dancourt</Authors>
         <Company>Diego Dancourt</Company>
         <Product>SmbSharp</Product>
@@ -22,7 +21,7 @@
         <RepositoryUrl>https://github.com/diegodancourt/SmbSharp</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
         <PackageTags>smb;cifs;smbclient;file;share;network;kerberos;cross-platform;wsl;macos</PackageTags>
-        <PackageReleaseNotes>v2.0.1: Disable Kerberos discovery for username/password smbclient connections to avoid slow logins and intermittent disconnects. Bound pooled session initialization to 30 seconds per attempt and retry broken connections or timeouts up to three total attempts with exponential backoff and jitter. Recognized authentication, permission, and missing-path errors are not retried. Dispose failed sessions and clear stale pool slots to prevent "No process is associated with this object" failures. Prefer idle live sessions for sequential calls while retaining pool capacity for concurrent operations. Log successful session establishment at Information level with elapsed milliseconds.</PackageReleaseNotes>
+        <PackageReleaseNotes>v2.1.0: Security and reliability release. Remote file names and paths are validated and quoted to prevent smbclient command injection; names containing quotes, semicolons, wildcards or control characters are now rejected. Passwords are passed to smbclient through the child environment instead of credentials files. Cancelled or timed-out pooled commands now invalidate the session (new configurable command timeout) and are never replayed. Same-share moves use server-side rename and no longer overwrite or roll back existing destinations. Pooled sessions and factory-created handlers are disposed correctly. Added WslDistribution option, BSD/macOS script support, unified NT_STATUS error classification, and fixed lazy native enumeration. Removed GeneratePackageOnBuild.</PackageReleaseNotes>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
     </PropertyGroup>
@@ -40,6 +39,7 @@
     <ItemGroup>
         <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="3.1.0" />
         <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="3.1.0" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="3.1.0" />
     </ItemGroup>
 
 </Project>
